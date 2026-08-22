@@ -1,0 +1,1257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>FastSewa Admin</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --primary:#FF6B2C;--primary-lt:#fff3ee;--success:#2ECC71;--error:#E74C3C;--warn:#F39C12;
+  --bg:#F7F6F3;--surface:#fff;--border:#E5E7EB;--text:#1A1A1A;--muted:#6B7280;--sidebar:240px
+}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:var(--bg);color:var(--text);font-size:14px}
+button{cursor:pointer;border:none;font:inherit}input,select,textarea{font:inherit}
+.sidebar{width:var(--sidebar);background:#1F2937;color:#F9FAFB;display:flex;flex-direction:column;position:fixed;top:0;left:0;bottom:0;overflow-y:auto;z-index:50}
+.sb-brand{padding:20px 20px 16px;border-bottom:1px solid #374151}
+.sb-logo{font-size:22px;font-weight:800;color:var(--primary)}
+.sb-sub{font-size:11px;color:#9CA3AF;margin-top:2px}
+.sb-nav{flex:1;padding:12px 8px;display:flex;flex-direction:column;gap:2px}
+.nav-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;cursor:pointer;color:#9CA3AF;font-weight:500;transition:all .15s}
+.nav-item:hover{background:#374151;color:#F9FAFB}
+.nav-item.active{background:var(--primary);color:#fff}
+.nav-icon{font-size:16px;width:20px;text-align:center}
+.sb-foot{padding:16px;border-top:1px solid #374151}
+.u-chip{display:flex;align-items:center;gap:10px}
+.u-av{width:32px;height:32px;border-radius:50%;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px}
+.main{margin-left:var(--sidebar);flex:1;display:flex;flex-direction:column;min-height:100vh}
+.topbar{background:var(--surface);border-bottom:1px solid var(--border);padding:0 24px;height:60px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:40}
+.page-title{font-size:18px;font-weight:700}
+.content{padding:24px}
+.card{background:var(--surface);border-radius:12px;border:1px solid var(--border);padding:20px}
+.card-title{font-size:15px;font-weight:700;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px}
+.stat-card{background:var(--surface);border-radius:12px;border:1px solid var(--border);padding:20px;position:relative}
+.stat-icon{position:absolute;top:16px;right:16px;font-size:28px}
+.stat-label{font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.5px}
+.stat-val{font-size:32px;font-weight:800;margin:6px 0 2px}
+.stat-sub{font-size:12px;color:var(--muted)}
+.table-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;padding:10px 12px;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border);white-space:nowrap}
+td{padding:12px;border-bottom:1px solid var(--border);vertical-align:middle}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:var(--bg)}
+.badge{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:700}
+.b-green{background:#dcfce7;color:#166534}.b-red{background:#fee2e2;color:#991b1b}
+.b-orange{background:#fff7ed;color:#9a3412}.b-blue{background:#dbeafe;color:#1e40af}
+.b-yellow{background:#fef9c3;color:#854d0e}.b-gray{background:#F3F4F6;color:#374151}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:8px;font-weight:600;font-size:13px;transition:opacity .15s;white-space:nowrap}
+.btn:hover{opacity:.85}.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn-primary{background:var(--primary);color:#fff}
+.btn-secondary{background:var(--bg);border:1px solid var(--border);color:var(--text)}
+.btn-danger{background:var(--error);color:#fff}
+.btn-success{background:var(--success);color:#fff}
+.btn-warn{background:var(--warn);color:#fff}
+.btn-sm{padding:5px 10px;font-size:12px;border-radius:6px}
+.form-group{margin-bottom:16px}
+.form-label{display:block;font-size:13px;font-weight:600;margin-bottom:6px;color:var(--text)}
+.form-label .req{color:var(--error);margin-left:2px}
+.form-input,.form-select,.form-textarea{width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;background:var(--surface);outline:none;transition:border-color .15s}
+.form-input:focus,.form-select:focus,.form-textarea:focus{border-color:var(--primary);box-shadow:0 0 0 3px #FF6B2C1a}
+.form-textarea{resize:vertical;min-height:80px}
+.form-hint{font-size:11px;color:var(--muted);margin-top:4px}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.form-row-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px}
+.modal{background:var(--surface);border-radius:16px;width:100%;max-width:680px;max-height:92vh;overflow-y:auto;display:flex;flex-direction:column}
+.modal-wide{max-width:900px}
+.modal-hd{padding:20px 24px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface);z-index:10}
+.modal-title{font-size:17px;font-weight:700}
+.modal-close{width:32px;height:32px;border-radius:50%;border:1px solid var(--border);background:transparent;font-size:18px;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0}
+.modal-body{padding:20px 24px;flex:1}
+.modal-ft{padding:16px 24px;display:flex;justify-content:flex-end;gap:10px;border-top:1px solid var(--border);background:var(--surface);position:sticky;bottom:0}
+.alert{padding:12px 16px;border-radius:8px;font-size:13px;margin-bottom:16px}
+.alert-error{background:#fee2e2;color:#991b1b}
+.alert-success{background:#dcfce7;color:#166534}
+.alert-warn{background:#fef9c3;color:#854d0e}
+.spinner{display:inline-block;width:18px;height:18px;border:2px solid var(--border);border-top-color:var(--primary);border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.prog-bar{height:6px;background:var(--border);border-radius:3px;overflow:hidden}
+.prog-fill{height:100%;background:var(--primary);border-radius:3px;transition:width .3s}
+.login-page{min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg)}
+.login-card{background:var(--surface);border-radius:16px;padding:40px;width:100%;max-width:400px;border:1px solid var(--border)}
+.sec-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.empty-state{text-align:center;padding:48px 20px;color:var(--muted)}
+.empty-icon{font-size:48px;margin-bottom:12px}
+.charts-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px}
+
+/* Upload area */
+.upload-zone{border:2px dashed var(--border);border-radius:12px;padding:32px;text-align:center;cursor:pointer;transition:all .2s;background:var(--bg)}
+.upload-zone:hover,.upload-zone.drag{border-color:var(--primary);background:var(--primary-lt)}
+.upload-zone.drag{transform:scale(1.01)}
+.upload-preview{position:relative;border-radius:8px;overflow:hidden;border:1px solid var(--border);background:#000;display:flex;align-items:center;justify-content:center}
+.upload-preview img{width:100%;border-radius:8px;object-fit:cover}
+.upload-preview video{width:100%;max-height:220px}
+.upload-remove{position:absolute;top:8px;right:8px;background:rgba(0,0,0,.6);color:#fff;border:none;border-radius:50%;width:28px;height:28px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px}
+.prog-uploading{height:4px;background:var(--border);border-radius:2px;overflow:hidden;margin-top:8px}
+.prog-uploading-fill{height:100%;background:var(--primary);border-radius:2px;transition:width .2s}
+
+/* Content tree */
+.ctree-module{border:1px solid var(--border);border-radius:12px;margin-bottom:12px;overflow:hidden}
+.ctree-mod-hd{display:flex;align-items:center;gap:10px;padding:14px 16px;background:var(--bg);cursor:pointer;border-bottom:1px solid var(--border)}
+.ctree-mod-hd:hover{background:#eee}
+.ctree-mod-num{width:28px;height:28px;border-radius:50%;background:var(--primary);color:#fff;font-weight:700;font-size:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.ctree-lesson{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--border);transition:background .1s}
+.ctree-lesson:last-child{border-bottom:none}
+.ctree-lesson:hover{background:var(--bg)}
+.ctree-lesson-icon{width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}
+.drag-handle{cursor:grab;color:var(--muted);font-size:16px;padding:4px}
+
+/* Quiz builder */
+.quiz-question{border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:12px;background:var(--bg)}
+.quiz-q-num{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;margin-bottom:8px}
+.quiz-option{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;border:1px solid var(--border);margin-bottom:6px;background:var(--surface)}
+.quiz-option.correct{border-color:var(--success);background:#dcfce7}
+.quiz-option input[type=radio]{accent-color:var(--success);width:16px;height:16px}
+.quiz-option-text{flex:1;padding:4px 8px;border:none;background:transparent;outline:none;font:inherit}
+.quiz-option.correct .quiz-option-text{font-weight:600;color:#166534}
+.add-option-btn{border:1px dashed var(--border);background:transparent;border-radius:8px;padding:6px 12px;color:var(--muted);font-size:12px;width:100%;cursor:pointer}
+.add-option-btn:hover{border-color:var(--primary);color:var(--primary)}
+
+/* YT preview */
+.yt-preview{background:#000;border-radius:8px;overflow:hidden;aspect-ratio:16/9;margin-top:8px}
+.yt-preview iframe{width:100%;height:100%;border:none}
+
+/* Tabs */
+.tab-bar{display:flex;gap:4px;margin-bottom:20px;border-bottom:1px solid var(--border);padding-bottom:0}
+.tab{padding:8px 16px;font-weight:600;font-size:13px;cursor:pointer;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px}
+.tab.active{color:var(--primary);border-bottom-color:var(--primary)}
+.tab:hover:not(.active){color:var(--text)}
+
+/* Reorder pill */
+.reorder-btn{background:transparent;border:1px solid var(--border);border-radius:6px;padding:3px 6px;cursor:pointer;color:var(--muted);font-size:12px}
+.reorder-btn:hover{border-color:var(--primary);color:var(--primary)}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useEffect,useCallback,useRef,useMemo}=React;
+
+// ── Config ────────────────────────────────────────────────────────────────────
+const API=(window.FASTSEWA_API_URL||"http://localhost:5000").replace(/\/$/,"");
+
+// ── API Client ────────────────────────────────────────────────────────────────
+let _at=localStorage.getItem("fs_at")||"";
+let _rt=localStorage.getItem("fs_rt")||"";
+function saveTok(a,r){_at=a;_rt=r;localStorage.setItem("fs_at",a);localStorage.setItem("fs_rt",r)}
+function clearTok(){_at="";_rt="";localStorage.removeItem("fs_at");localStorage.removeItem("fs_rt")}
+
+async function apiFetch(method,path,body,isMultipart=false){
+  const headers={};
+  if(_at)headers["Authorization"]=`Bearer ${_at}`;
+  if(!isMultipart)headers["Content-Type"]="application/json";
+  const res=await fetch(API+path,{method,headers,body:isMultipart?body:body!==undefined?JSON.stringify(body):undefined});
+  if(res.status===401&&_rt){
+    const rr=await fetch(API+"/api/v1/auth/refresh",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({refreshToken:_rt})});
+    if(rr.ok){const d=await rr.json();saveTok(d.accessToken,d.refreshToken);return apiFetch(method,path,body,isMultipart)}
+    clearTok();window.location.reload();return;
+  }
+  if(!res.ok){const e=await res.json().catch(()=>({error:"Request failed"}));throw new Error(e.error||"Request failed")}
+  if(res.status===204)return null;
+  return res.json();
+}
+const api={
+  get:(p)=>apiFetch("GET",p),
+  post:(p,b)=>apiFetch("POST",p,b),
+  put:(p,b)=>apiFetch("PUT",p,b),
+  patch:(p,b)=>apiFetch("PATCH",p,b),
+  delete:(p)=>apiFetch("DELETE",p),
+  upload:(p,fd)=>apiFetch("POST",p,fd,true),
+};
+
+function useFetch(path,deps=[]){
+  const [data,setData]=useState(null);
+  const [loading,setLoading]=useState(true);
+  const [error,setError]=useState(null);
+  const load=useCallback(async()=>{
+    if(!path)return;
+    setLoading(true);setError(null);
+    try{setData(await api.get(path))}catch(e){setError(e.message)}
+    finally{setLoading(false)};
+  },[path,...deps]);
+  useEffect(()=>{load()},[load]);
+  return{data,loading,error,refetch:load};
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function Spinner(){return <span className="spinner"/>}
+
+function Alert({type="error",msg,onClose}){
+  if(!msg)return null;
+  const cls={error:"alert-error",success:"alert-success",warn:"alert-warn"}[type];
+  return(
+    <div className={`alert ${cls}`} style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+      <span>{msg}</span>
+      {onClose&&<button onClick={onClose} style={{background:"none",fontWeight:700,fontSize:16,color:"inherit"}}>×</button>}
+    </div>
+  );
+}
+
+function Modal({title,onClose,children,footer,wide=false}){
+  return(
+    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div className={`modal${wide?" modal-wide":""}`}>
+        <div className="modal-hd">
+          <span className="modal-title">{title}</span>
+          <button className="modal-close" onClick={onClose}>×</button>
+        </div>
+        <div className="modal-body">{children}</div>
+        {footer&&<div className="modal-ft">{footer}</div>}
+      </div>
+    </div>
+  );
+}
+
+// ── YouTube URL parser ────────────────────────────────────────────────────────
+function getYtId(url){
+  const m=url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([^&?/]+)/);
+  return m?m[1]:null;
+}
+
+// ── Upload Zone Component ─────────────────────────────────────────────────────
+function UploadZone({accept,label,onFile,preview,onRemove,uploadPct}){
+  const [drag,setDrag]=useState(false);
+  const inputRef=useRef();
+  const handleDrop=e=>{e.preventDefault();setDrag(false);const f=e.dataTransfer.files[0];if(f)onFile(f)};
+  if(preview){
+    const isVideo=preview.type?.startsWith("video")||preview.url?.match(/\.(mp4|webm|mov)/i);
+    return(
+      <div>
+        <div className="upload-preview" style={{minHeight:isVideo?220:160}}>
+          {isVideo
+            ?<video src={preview.url||URL.createObjectURL(preview.file)} controls style={{width:"100%",maxHeight:220}}/>
+            :<img src={preview.url||URL.createObjectURL(preview.file)} alt="preview" style={{width:"100%",maxHeight:200,objectFit:"cover"}}/>
+          }
+          <button className="upload-remove" onClick={onRemove}>×</button>
+        </div>
+        {uploadPct>0&&uploadPct<100&&(
+          <div className="prog-uploading"><div className="prog-uploading-fill" style={{width:`${uploadPct}%`}}/></div>
+        )}
+        {preview.url&&<p style={{fontSize:11,color:"#2ECC71",marginTop:4}}>✅ Uploaded</p>}
+      </div>
+    );
+  }
+  return(
+    <div
+      className={`upload-zone${drag?" drag":""}`}
+      onDragOver={e=>{e.preventDefault();setDrag(true)}}
+      onDragLeave={()=>setDrag(false)}
+      onDrop={handleDrop}
+      onClick={()=>inputRef.current.click()}
+    >
+      <input ref={inputRef} type="file" accept={accept} style={{display:"none"}} onChange={e=>e.target.files[0]&&onFile(e.target.files[0])}/>
+      <div style={{fontSize:36,marginBottom:8}}>📁</div>
+      <p style={{fontWeight:600,marginBottom:4}}>{label}</p>
+      <p style={{color:"var(--muted)",fontSize:12}}>Drag & drop or click to browse</p>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// LOGIN PAGE
+// ════════════════════════════════════════════════════════════════════════════════
+function LoginPage({onLogin}){
+  const [u,setU]=useState("admin");const [p,setP]=useState("");
+  const [err,setErr]=useState("");const [loading,setLoading]=useState(false);
+  const submit=async e=>{
+    e.preventDefault();setLoading(true);setErr("");
+    try{
+      const d=await api.post("/api/v1/auth/login",{username:u,password:p});
+      if(!["admin","trainer"].includes(d.user.role)){setErr("Admin or Trainer role required.");return}
+      saveTok(d.accessToken,d.refreshToken);onLogin(d.user);
+    }catch(e){setErr(e.message)}finally{setLoading(false)};
+  };
+  return(
+    <div className="login-page">
+      <div className="login-card">
+        <div style={{fontSize:48,textAlign:"center",marginBottom:8}}>🦺</div>
+        <h1 style={{fontSize:24,fontWeight:800,textAlign:"center",marginBottom:4}}>FastSewa Admin</h1>
+        <p style={{color:"var(--muted)",textAlign:"center",marginBottom:28,fontSize:13}}>Construction Training Platform</p>
+        {err&&<Alert msg={err} onClose={()=>setErr("")}/>}
+        <form onSubmit={submit}>
+          <div className="form-group">
+            <label className="form-label">Username</label>
+            <input className="form-input" value={u} onChange={e=>setU(e.target.value)} autoFocus/>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Password</label>
+            <input className="form-input" type="password" value={p} onChange={e=>setP(e.target.value)}/>
+          </div>
+          <button className="btn btn-primary" style={{width:"100%",justifyContent:"center"}} disabled={loading}>
+            {loading?<Spinner/>:"Sign In →"}
+          </button>
+        </form>
+        <p style={{color:"var(--muted)",fontSize:11,textAlign:"center",marginTop:20}}>
+          API: {API} · Default: admin / Admin@1234
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// DASHBOARD PAGE
+// ════════════════════════════════════════════════════════════════════════════════
+function DashboardPage(){
+  const {data:stats}=useFetch("/api/v1/admin/dashboard");
+  const {data:analytics}=useFetch("/api/v1/admin/analytics/courses");
+  const chartRef=useRef();const chartInst=useRef();
+  useEffect(()=>{
+    if(!analytics||!chartRef.current)return;
+    if(chartInst.current)chartInst.current.destroy();
+    chartInst.current=new Chart(chartRef.current,{
+      type:"bar",
+      data:{labels:analytics.slice(0,8).map(c=>c.courseTitle.slice(0,18)+"…"),datasets:[{label:"Enrollments",data:analytics.slice(0,8).map(c=>c.enrolled),backgroundColor:"#FF6B2C",borderRadius:6}]},
+      options:{responsive:true,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,ticks:{stepSize:1}}}},
+    });
+  },[analytics]);
+  const cards=[
+    {l:"Total Workers",v:stats?.totalWorkers??"—",i:"👷",s:"Registered"},
+    {l:"Published Courses",v:stats?.totalCourses??"—",i:"📚",s:"Live"},
+    {l:"Enrollments",v:stats?.totalEnrollments??"—",i:"🎓",s:"Total"},
+    {l:"Completion Rate",v:stats?`${stats.completionRate}%`:"—",i:"✅",s:"Courses finished"},
+  ];
+  return(
+    <div>
+      <div className="stats-grid">
+        {cards.map(c=>(
+          <div key={c.l} className="stat-card">
+            <span className="stat-icon">{c.i}</span>
+            <div className="stat-label">{c.l}</div>
+            <div className="stat-val">{c.v}</div>
+            <div className="stat-sub">{c.s}</div>
+          </div>
+        ))}
+      </div>
+      <div className="charts-grid">
+        <div className="card"><div className="card-title">📊 Enrollments by Course</div><canvas ref={chartRef} height={200}/></div>
+        <div className="card">
+          <div className="card-title">🏆 Top Courses</div>
+          {(analytics||[]).slice(0,6).map((c,i)=>(
+            <div key={c.courseId} style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+              <span style={{color:"var(--muted)",fontSize:12,width:16}}>{i+1}</span>
+              <div style={{flex:1}}>
+                <div style={{fontSize:13,fontWeight:600,marginBottom:4}}>{c.courseTitle}</div>
+                <div className="prog-bar"><div className="prog-fill" style={{width:`${Math.min((c.enrolled/(analytics[0]?.enrolled||1))*100,100)}%`}}/></div>
+              </div>
+              <span className="badge b-blue">{c.enrolled}</span>
+            </div>
+          ))}
+          {!analytics&&<div style={{textAlign:"center",padding:20}}><Spinner/></div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// COURSES PAGE
+// ════════════════════════════════════════════════════════════════════════════════
+function CoursesPage(){
+  const {data:courses,loading,refetch}=useFetch("/api/v1/admin/courses");
+  const [modal,setModal]=useState(null); // null | {mode:'create'|'edit', course?}
+  const [form,setForm]=useState({});
+  const [thumbnail,setThumbnail]=useState(null); // {file,url}
+  const [uploading,setUploading]=useState(false);
+  const [uploadPct,setUploadPct]=useState(0);
+  const [msg,setMsg]=useState(null);
+  const [search,setSearch]=useState("");
+
+  const CATS=["safety","basics","tools","discipline","electrical","plumbing","masonry","equipment"];
+  const DIFFS=["beginner","intermediate","advanced"];
+  const CAT_B={safety:"b-red",basics:"b-blue",tools:"b-orange",discipline:"b-blue",electrical:"b-yellow",plumbing:"b-green",masonry:"b-orange",equipment:"b-green"};
+
+  const openCreate=()=>{
+    setForm({slug:"",title:"",titleHi:"",description:"",descriptionHi:"",category:"safety",difficulty:"beginner",thumbnailUrl:""});
+    setThumbnail(null);setModal({mode:"create"});
+  };
+  const openEdit=c=>{
+    setForm({slug:c.slug,title:c.title,titleHi:c.titleHi||"",description:c.description,descriptionHi:c.descriptionHi||"",category:c.category,difficulty:c.difficulty,thumbnailUrl:c.thumbnailUrl||""});
+    setThumbnail(c.thumbnailUrl?{url:c.thumbnailUrl}:null);
+    setModal({mode:"edit",course:c});
+  };
+
+  const handleThumbnail=async file=>{
+    setThumbnail({file});
+    setUploading(true);setUploadPct(10);
+    try{
+      const fd=new FormData();fd.append("file",file);fd.append("folder","thumbnails");
+      const res=await api.upload("/api/v1/upload/image",fd);
+      setThumbnail({file,url:res.url});
+      setForm(f=>({...f,thumbnailUrl:res.url}));
+      setUploadPct(100);
+    }catch(e){setMsg({type:"error",text:"Thumbnail upload failed: "+e.message})}
+    finally{setUploading(false)};
+  };
+
+  const save=async()=>{
+    if(!form.title||!form.slug||!form.description){setMsg({type:"error",text:"Title, slug and description are required"});return}
+    try{
+      if(modal.mode==="edit")await api.put(`/api/v1/admin/courses/${modal.course.id}`,form);
+      else await api.post("/api/v1/admin/courses",form);
+      setMsg({type:"success",text:"Course saved!"});setModal(null);refetch();
+    }catch(e){setMsg({type:"error",text:e.message})};
+  };
+
+  const togglePublish=async c=>{
+    await api.patch(`/api/v1/admin/courses/${c.id}/publish`,{published:!c.isPublished});refetch();
+  };
+  const del=async id=>{
+    if(!confirm("Delete course and ALL its modules, lessons and quizzes?"))return;
+    await api.delete(`/api/v1/admin/courses/${id}`);refetch();
+  };
+
+  const filtered=(courses||[]).filter(c=>
+    c.title.toLowerCase().includes(search.toLowerCase())||c.category.includes(search.toLowerCase())
+  );
+
+  return(
+    <div>
+      {msg&&<Alert type={msg.type} msg={msg.text} onClose={()=>setMsg(null)}/>}
+      <div className="sec-hd">
+        <input className="form-input" style={{maxWidth:280}} placeholder="Search courses…" value={search} onChange={e=>setSearch(e.target.value)}/>
+        <button className="btn btn-primary" onClick={openCreate}>+ New Course</button>
+      </div>
+      <div className="card">
+        {loading?<div style={{textAlign:"center",padding:40}}><Spinner/></div>:(
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Course</th><th>Category</th><th>Difficulty</th><th>Duration</th><th>Status</th><th>Actions</th></tr></thead>
+              <tbody>
+                {filtered.map(c=>(
+                  <tr key={c.id}>
+                    <td>
+                      <div style={{display:"flex",alignItems:"center",gap:10}}>
+                        {c.thumbnailUrl&&<img src={c.thumbnailUrl} style={{width:40,height:40,borderRadius:6,objectFit:"cover"}}/>}
+                        <div>
+                          <div style={{fontWeight:600}}>{c.title}</div>
+                          {c.titleHi&&<div style={{fontSize:11,color:"var(--muted)"}}>{c.titleHi}</div>}
+                          <div style={{fontSize:11,color:"var(--muted)"}}>/courses/{c.slug}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td><span className={`badge ${CAT_B[c.category]||"b-gray"}`}>{c.category}</span></td>
+                    <td><span className="badge b-gray">{c.difficulty}</span></td>
+                    <td>{c.durationMinutes}m</td>
+                    <td><span className={`badge ${c.isPublished?"b-green":"b-gray"}`}>{c.isPublished?"● Published":"○ Draft"}</span></td>
+                    <td>
+                      <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                        <button className="btn btn-secondary btn-sm" onClick={()=>openEdit(c)}>Edit</button>
+                        <button className={`btn btn-sm ${c.isPublished?"btn-warn":"btn-success"}`} onClick={()=>togglePublish(c)}>{c.isPublished?"Unpublish":"Publish"}</button>
+                        <button className="btn btn-danger btn-sm" onClick={()=>del(c.id)}>Delete</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {filtered.length===0&&<tr><td colSpan={6} style={{textAlign:"center",color:"var(--muted)",padding:32}}>No courses yet</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {modal&&(
+        <Modal title={modal.mode==="create"?"New Course":"Edit Course"} onClose={()=>setModal(null)}
+          footer={<>
+            <button className="btn btn-secondary" onClick={()=>setModal(null)}>Cancel</button>
+            <button className="btn btn-primary" onClick={save} disabled={uploading}>{uploading?<Spinner/>:"Save Course"}</button>
+          </>}>
+          <div className="tab-bar" style={{marginBottom:20}}>
+            <span style={{fontSize:13,color:"var(--muted)"}}>Fill all fields. Hindi fields optional but recommended for workers.</span>
+          </div>
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label">Slug (URL key)<span className="req">*</span></label>
+              <input className="form-input" value={form.slug} onChange={e=>setForm({...form,slug:e.target.value.toLowerCase().replace(/[^a-z0-9-]/g,"-")})} placeholder="site-safety-101"/>
+              <div className="form-hint">Lowercase, hyphens only. Used in the app URL.</div>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Category<span className="req">*</span></label>
+              <select className="form-select" value={form.category} onChange={e=>setForm({...form,category:e.target.value})}>
+                {CATS.map(c=><option key={c}>{c}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label">Title (English)<span className="req">*</span></label>
+              <input className="form-input" value={form.title} onChange={e=>setForm({...form,title:e.target.value})}/>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Title (Hindi)</label>
+              <input className="form-input" value={form.titleHi} onChange={e=>setForm({...form,titleHi:e.target.value})} placeholder="हिंदी शीर्षक"/>
+            </div>
+          </div>
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label">Description (English)<span className="req">*</span></label>
+              <textarea className="form-textarea" value={form.description} onChange={e=>setForm({...form,description:e.target.value})}/>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Description (Hindi)</label>
+              <textarea className="form-textarea" value={form.descriptionHi} onChange={e=>setForm({...form,descriptionHi:e.target.value})} placeholder="हिंदी विवरण"/>
+            </div>
+          </div>
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label">Difficulty</label>
+              <select className="form-select" value={form.difficulty} onChange={e=>setForm({...form,difficulty:e.target.value})}>
+                {DIFFS.map(d=><option key={d}>{d}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Thumbnail Image</label>
+            <UploadZone
+              accept="image/jpeg,image/png,image/webp"
+              label="Upload course thumbnail (JPG/PNG, max 10MB)"
+              onFile={handleThumbnail}
+              preview={thumbnail}
+              onRemove={()=>{setThumbnail(null);setForm(f=>({...f,thumbnailUrl:""}))}}
+              uploadPct={uploadPct}
+            />
+            <div className="form-hint" style={{marginTop:8}}>Or paste a URL directly:</div>
+            <input className="form-input" style={{marginTop:4}} value={form.thumbnailUrl} onChange={e=>{setForm({...form,thumbnailUrl:e.target.value});e.target.value&&setThumbnail({url:e.target.value})}} placeholder="https://…"/>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// CONTENT BUILDER PAGE — Modules + Lessons + Quiz
+// ════════════════════════════════════════════════════════════════════════════════
+function ContentPage(){
+  const {data:courses}=useFetch("/api/v1/admin/courses");
+  const [selCourse,setSelCourse]=useState(null);
+  const {data:courseDetail,refetch:refetchDetail}=useFetch(selCourse?`/api/v1/courses/${selCourse.id}`:null,[selCourse?.id]);
+  const [msg,setMsg]=useState(null);
+
+  // Modals
+  const [modModal,setModModal]=useState(false);
+  const [lessonModal,setLessonModal]=useState(null); // {moduleId, lesson?}
+  const [quizModal,setQuizModal]=useState(null);     // {moduleId, quiz?}
+
+  const notify=(type,text)=>{setMsg({type,text});setTimeout(()=>setMsg(null),3500)};
+
+  return(
+    <div style={{display:"flex",gap:16,alignItems:"flex-start"}}>
+      {/* ── Course sidebar ─────────────────────────────── */}
+      <div style={{width:220,flexShrink:0}}>
+        <div style={{fontWeight:700,fontSize:11,color:"var(--muted)",textTransform:"uppercase",letterSpacing:.5,marginBottom:10}}>Select Course</div>
+        {(courses||[]).length===0&&<div style={{color:"var(--muted)",fontSize:13}}>No courses yet. Create one first.</div>}
+        {(courses||[]).map(c=>(
+          <div key={c.id} onClick={()=>setSelCourse(c)}
+            style={{padding:"10px 12px",borderRadius:8,cursor:"pointer",marginBottom:4,
+              background:selCourse?.id===c.id?"var(--primary-lt)":"transparent",
+              border:selCourse?.id===c.id?"1px solid var(--primary)":"1px solid transparent",
+              fontWeight:selCourse?.id===c.id?600:400}}>
+            <div style={{fontSize:13}}>{c.title}</div>
+            <div style={{fontSize:11,color:"var(--muted)",marginTop:2,display:"flex",gap:6}}>
+              <span>{c.category}</span>
+              <span className={`badge ${c.isPublished?"b-green":"b-gray"}`} style={{fontSize:10,padding:"1px 6px"}}>{c.isPublished?"live":"draft"}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Module + lesson tree ────────────────────────── */}
+      <div style={{flex:1}}>
+        {!selCourse?(
+          <div className="empty-state"><div className="empty-icon">👈</div><p>Select a course to manage its content</p></div>
+        ):(
+          <>
+            {msg&&<Alert type={msg.type} msg={msg.text} onClose={()=>setMsg(null)}/>}
+            <div className="sec-hd">
+              <div>
+                <h2 style={{fontSize:16,fontWeight:700}}>{selCourse.title}</h2>
+                <div style={{fontSize:12,color:"var(--muted)"}}>{(courseDetail?.modules||[]).length} modules · {(courseDetail?.modules||[]).reduce((s,m)=>s+(m.lessons?.length||0),0)} lessons</div>
+              </div>
+              <button className="btn btn-primary" onClick={()=>setModModal(true)}>+ Add Module</button>
+            </div>
+
+            {(courseDetail?.modules||[]).map((mod,mi)=>(
+              <ModuleRow
+                key={mod.id} mod={mod} idx={mi}
+                onAddLesson={()=>setLessonModal({moduleId:mod.id})}
+                onEditLesson={l=>setLessonModal({moduleId:mod.id,lesson:l})}
+                onAddQuiz={()=>setQuizModal({moduleId:mod.id})}
+                onEditQuiz={q=>setQuizModal({moduleId:mod.id,quiz:q})}
+                onRefresh={refetchDetail}
+                notify={notify}
+              />
+            ))}
+
+            {(courseDetail?.modules||[]).length===0&&!courseDetail&&(
+              <div style={{textAlign:"center",padding:40}}><Spinner/></div>
+            )}
+            {(courseDetail?.modules||[]).length===0&&courseDetail&&(
+              <div className="empty-state"><div className="empty-icon">📦</div><p>No modules yet. Click "+ Add Module" above.</p></div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* ── Module modal ────────────────────────────────── */}
+      {modModal&&(
+        <AddModuleModal
+          courseId={selCourse.id}
+          onClose={()=>setModModal(false)}
+          onSaved={()=>{setModModal(false);refetchDetail();notify("success","Module added!")}}
+        />
+      )}
+
+      {/* ── Lesson modal ─────────────────────────────────── */}
+      {lessonModal&&(
+        <LessonModal
+          moduleId={lessonModal.moduleId}
+          lesson={lessonModal.lesson}
+          onClose={()=>setLessonModal(null)}
+          onSaved={()=>{setLessonModal(null);refetchDetail();notify("success",lessonModal.lesson?"Lesson updated!":"Lesson added!")}}
+        />
+      )}
+
+      {/* ── Quiz modal ───────────────────────────────────── */}
+      {quizModal&&(
+        <QuizModal
+          moduleId={quizModal.moduleId}
+          onClose={()=>setQuizModal(null)}
+          onSaved={()=>{setQuizModal(null);refetchDetail();notify("success","Quiz saved!")}}
+        />
+      )}
+    </div>
+  );
+}
+
+function ModuleRow({mod,idx,onAddLesson,onEditLesson,onAddQuiz,onRefresh,notify}){
+  const [open,setOpen]=useState(true);
+  const ICONS={video:"▶️",text:"📄",image:"🖼️",quiz:"❓"};
+  const BG={video:"#dbeafe",text:"#f3f4f6",image:"#fce7f3",quiz:"#fef9c3"};
+
+  const delModule=async()=>{
+    if(!confirm("Delete this module and ALL its lessons?"))return;
+    try{await api.delete(`/api/v1/admin/modules/${mod.id}`);onRefresh()}
+    catch(e){notify("error",e.message)};
+  };
+  const delLesson=async id=>{
+    if(!confirm("Delete this lesson?"))return;
+    try{await api.delete(`/api/v1/admin/lessons/${id}`);onRefresh()}
+    catch(e){notify("error",e.message)};
+  };
+  const moveLesson=async(lesson,dir)=>{
+    const lessons=mod.lessons;
+    const i=lessons.findIndex(l=>l.id===lesson.id);
+    const newIdx=i+dir;
+    if(newIdx<0||newIdx>=lessons.length)return;
+    // Swap sort orders
+    const a=lessons[i],b=lessons[newIdx];
+    await Promise.all([
+      api.put(`/api/v1/admin/lessons/${a.id}`,{sortOrder:b.sortOrder}),
+      api.put(`/api/v1/admin/lessons/${b.id}`,{sortOrder:a.sortOrder}),
+    ]);
+    onRefresh();
+  };
+
+  return(
+    <div className="ctree-module">
+      <div className="ctree-mod-hd" onClick={()=>setOpen(o=>!o)}>
+        <div className="ctree-mod-num">{idx+1}</div>
+        <div style={{flex:1}}>
+          <div style={{fontWeight:700}}>{mod.title}</div>
+          {mod.titleHi&&<div style={{fontSize:11,color:"var(--muted)"}}>{mod.titleHi}</div>}
+        </div>
+        <div style={{display:"flex",gap:6}} onClick={e=>e.stopPropagation()}>
+          <button className="btn btn-primary btn-sm" onClick={onAddLesson}>+ Lesson</button>
+          <button className="btn btn-secondary btn-sm" onClick={onAddQuiz}>+ Quiz</button>
+          <button className="btn btn-danger btn-sm" onClick={delModule}>Del</button>
+          <span style={{color:"var(--muted)",fontSize:18}}>{open?"▲":"▼"}</span>
+        </div>
+      </div>
+
+      {open&&(
+        <div>
+          {(mod.lessons||[]).length===0&&(
+            <div style={{padding:"16px 20px",color:"var(--muted)",fontSize:13}}>No lessons yet — click "+ Lesson" to add one.</div>
+          )}
+          {(mod.lessons||[]).map((lesson,li)=>(
+            <div key={lesson.id} className="ctree-lesson">
+              {/* Reorder */}
+              <div style={{display:"flex",flexDirection:"column",gap:2}}>
+                <button className="reorder-btn" onClick={()=>moveLesson(lesson,-1)} disabled={li===0}>↑</button>
+                <button className="reorder-btn" onClick={()=>moveLesson(lesson,1)} disabled={li===mod.lessons.length-1}>↓</button>
+              </div>
+              {/* Icon */}
+              <div className="ctree-lesson-icon" style={{background:BG[lesson.contentType]||"#f3f4f6"}}>
+                {ICONS[lesson.contentType]||"📄"}
+              </div>
+              {/* Info */}
+              <div style={{flex:1}}>
+                <div style={{fontWeight:600,fontSize:13}}>{lesson.title}</div>
+                {lesson.titleHi&&<div style={{fontSize:11,color:"var(--muted)"}}>{lesson.titleHi}</div>}
+                <div style={{fontSize:11,color:"var(--muted)",marginTop:2,display:"flex",gap:8}}>
+                  <span style={{textTransform:"capitalize"}}>{lesson.contentType}</span>
+                  {lesson.videoDurationSeconds&&<span>⏱ {Math.ceil(lesson.videoDurationSeconds/60)}min</span>}
+                  {lesson.videoUrl&&lesson.videoProvider==="youtube"&&<span>🔗 YouTube</span>}
+                  {lesson.videoUrl&&lesson.videoProvider!=="youtube"&&<span>☁️ Uploaded</span>}
+                  <span className={`badge ${lesson.isRequired?"b-orange":"b-gray"}`} style={{fontSize:10,padding:"1px 5px"}}>{lesson.isRequired?"required":"optional"}</span>
+                </div>
+              </div>
+              {/* Actions */}
+              <div style={{display:"flex",gap:6"}}>
+                <button className="btn btn-secondary btn-sm" onClick={()=>onEditLesson(lesson)}>Edit</button>
+                <button className="btn btn-danger btn-sm" onClick={()=>delLesson(lesson.id)}>Del</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Add Module Modal ──────────────────────────────────────────────────────────
+function AddModuleModal({courseId,onClose,onSaved}){
+  const [form,setForm]=useState({title:"",titleHi:"",description:"",descriptionHi:""});
+  const [saving,setSaving]=useState(false);
+  const [err,setErr]=useState("");
+  const save=async()=>{
+    if(!form.title){setErr("Title is required");return}
+    setSaving(true);
+    try{await api.post(`/api/v1/admin/courses/${courseId}/modules`,form);onSaved()}
+    catch(e){setErr(e.message)}finally{setSaving(false)};
+  };
+  return(
+    <Modal title="Add Module" onClose={onClose}
+      footer={<><button className="btn btn-secondary" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={save} disabled={saving}>{saving?<Spinner/>:"Save Module"}</button></>}>
+      {err&&<Alert msg={err} onClose={()=>setErr("")}/>}
+      <div className="form-row">
+        <div className="form-group">
+          <label className="form-label">Title (English)<span className="req">*</span></label>
+          <input className="form-input" value={form.title} onChange={e=>setForm({...form,title:e.target.value})} autoFocus/>
+        </div>
+        <div className="form-group">
+          <label className="form-label">Title (Hindi)</label>
+          <input className="form-input" value={form.titleHi} onChange={e=>setForm({...form,titleHi:e.target.value})} placeholder="हिंदी शीर्षक"/>
+        </div>
+      </div>
+      <div className="form-row">
+        <div className="form-group">
+          <label className="form-label">Description (English)</label>
+          <textarea className="form-textarea" value={form.description} onChange={e=>setForm({...form,description:e.target.value})}/>
+        </div>
+        <div className="form-group">
+          <label className="form-label">Description (Hindi)</label>
+          <textarea className="form-textarea" value={form.descriptionHi} onChange={e=>setForm({...form,descriptionHi:e.target.value})}/>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ── Lesson Modal ──────────────────────────────────────────────────────────────
+function LessonModal({moduleId,lesson,onClose,onSaved}){
+  const editing=!!lesson;
+  const [tab,setTab]=useState("basic");
+  const [form,setForm]=useState(lesson?{
+    title:lesson.title,titleHi:lesson.titleHi||"",contentType:lesson.contentType,
+    videoUrl:lesson.videoUrl||"",videoProvider:lesson.videoProvider||"youtube",
+    videoDurationSeconds:lesson.videoDurationSeconds||"",
+    content:lesson.content||"",contentHi:lesson.contentHi||"",
+    imageUrl:lesson.imageUrl||"",sortOrder:lesson.sortOrder||0,isRequired:lesson.isRequired??true,
+  }:{title:"",titleHi:"",contentType:"video",videoUrl:"",videoProvider:"youtube",videoDurationSeconds:"",content:"",contentHi:"",imageUrl:"",sortOrder:0,isRequired:true});
+
+  const [videoFile,setVideoFile]=useState(null);
+  const [imageFile,setImageFile]=useState(null);
+  const [uploading,setUploading]=useState(false);
+  const [uploadPct,setUploadPct]=useState(0);
+  const [saving,setSaving]=useState(false);
+  const [err,setErr]=useState("");
+
+  const ytId=form.videoProvider==="youtube"?getYtId(form.videoUrl):null;
+
+  const uploadVideo=async file=>{
+    setVideoFile({file});setUploading(true);setUploadPct(5);
+    try{
+      const fd=new FormData();fd.append("file",file);
+      setUploadPct(30);
+      const res=await api.upload("/api/v1/upload/video",fd);
+      setUploadPct(100);
+      setVideoFile({file,url:res.url});
+      setForm(f=>({...f,videoUrl:res.url,videoProvider:"cloudinary"}));
+    }catch(e){setErr("Video upload failed: "+e.message);setVideoFile(null)}
+    finally{setUploading(false)};
+  };
+
+  const uploadImage=async file=>{
+    setImageFile({file});setUploading(true);
+    try{
+      const fd=new FormData();fd.append("file",file);
+      const res=await api.upload("/api/v1/upload/image",fd);
+      setImageFile({file,url:res.url});
+      setForm(f=>({...f,imageUrl:res.url}));
+    }catch(e){setErr("Image upload failed: "+e.message);setImageFile(null)}
+    finally{setUploading(false)};
+  };
+
+  const save=async()=>{
+    if(!form.title){setErr("Title required");return}
+    if(form.contentType==="video"&&!form.videoUrl){setErr("Video URL or uploaded file required");return}
+    setSaving(true);
+    try{
+      const payload={...form,videoDurationSeconds:form.videoDurationSeconds?parseInt(form.videoDurationSeconds):undefined,sortOrder:parseInt(form.sortOrder)||0};
+      if(editing)await api.put(`/api/v1/admin/lessons/${lesson.id}`,payload);
+      else await api.post(`/api/v1/admin/modules/${moduleId}/lessons`,payload);
+      onSaved();
+    }catch(e){setErr(e.message)}finally{setSaving(false)};
+  };
+
+  return(
+    <Modal title={editing?"Edit Lesson":"Add Lesson"} onClose={onClose} wide
+      footer={<>
+        <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
+        <button className="btn btn-primary" onClick={save} disabled={saving||uploading}>
+          {saving||uploading?<Spinner/>:(editing?"Update Lesson":"Add Lesson")}
+        </button>
+      </>}>
+      {err&&<Alert msg={err} onClose={()=>setErr("")}/>}
+
+      {/* Tab bar */}
+      <div className="tab-bar">
+        {["basic","content","settings"].map(t=>(
+          <div key={t} className={`tab${tab===t?" active":""}`} onClick={()=>setTab(t)}>
+            {t==="basic"?"📝 Basic Info":t==="content"?"🎬 Content":t==="⚙️ Settings"}
+          </div>
+        ))}
+      </div>
+
+      {/* ─ Basic tab ─ */}
+      {tab==="basic"&&(
+        <>
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label">Title (English)<span className="req">*</span></label>
+              <input className="form-input" value={form.title} onChange={e=>setForm({...form,title:e.target.value})} autoFocus/>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Title (Hindi)</label>
+              <input className="form-input" value={form.titleHi} onChange={e=>setForm({...form,titleHi:e.target.value})} placeholder="हिंदी शीर्षक"/>
+            </div>
+          </div>
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label">Content Type<span className="req">*</span></label>
+              <select className="form-select" value={form.contentType} onChange={e=>setForm({...form,contentType:e.target.value})}>
+                <option value="video">▶️ Video</option>
+                <option value="text">📄 Text / Article</option>
+                <option value="image">🖼️ Image</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Sort Order</label>
+              <input className="form-input" type="number" value={form.sortOrder} onChange={e=>setForm({...form,sortOrder:e.target.value})}/>
+              <div className="form-hint">Lower numbers appear first</div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* ─ Content tab ─ */}
+      {tab==="content"&&form.contentType==="video"&&(
+        <>
+          <div className="form-group">
+            <label className="form-label">Video Source</label>
+            <div style={{display:"flex",gap:8,marginBottom:12}}>
+              {["youtube","cloudinary"].map(p=>(
+                <button key={p}
+                  className={`btn btn-sm ${form.videoProvider===p?"btn-primary":"btn-secondary"}`}
+                  onClick={()=>setForm({...form,videoProvider:p})}>
+                  {p==="youtube"?"🔴 YouTube":"☁️ Upload File"}
+                </button>
+              ))}
+            </div>
+
+            {form.videoProvider==="youtube"?(
+              <>
+                <input className="form-input" value={form.videoUrl} onChange={e=>setForm({...form,videoUrl:e.target.value})} placeholder="https://www.youtube.com/watch?v=..."/>
+                <div className="form-hint">Paste any YouTube URL — share link, watch link, or short link all work.</div>
+                {ytId&&(
+                  <div className="yt-preview" style={{marginTop:10}}>
+                    <iframe src={`https://www.youtube.com/embed/${ytId}`} allowFullScreen title="preview"/>
+                  </div>
+                )}
+              </>
+            ):(
+              <>
+                <UploadZone
+                  accept="video/mp4,video/webm,video/quicktime"
+                  label="Upload video (MP4/WebM, max 500MB)"
+                  onFile={uploadVideo}
+                  preview={videoFile||({url:form.videoUrl})}
+                  onRemove={()=>{setVideoFile(null);setForm(f=>({...f,videoUrl:""}))}}
+                  uploadPct={uploadPct}
+                />
+                {!videoFile&&<>
+                  <div className="form-hint" style={{marginTop:8}}>Or paste a direct video URL (Cloudinary/S3):</div>
+                  <input className="form-input" style={{marginTop:4}} value={form.videoUrl} onChange={e=>setForm({...form,videoUrl:e.target.value})} placeholder="https://res.cloudinary.com/…/video.mp4"/>
+                </>}
+              </>
+            )}
+          </div>
+          <div className="form-group">
+            <label className="form-label">Video Duration (seconds)</label>
+            <input className="form-input" type="number" value={form.videoDurationSeconds} onChange={e=>setForm({...form,videoDurationSeconds:e.target.value})} placeholder="e.g. 300 for 5 minutes"/>
+            <div className="form-hint">Used to show estimated time to workers.</div>
+          </div>
+        </>
+      )}
+
+      {tab==="content"&&form.contentType==="text"&&(
+        <>
+          <div className="form-group">
+            <label className="form-label">Content (English) — Markdown supported</label>
+            <textarea className="form-textarea" style={{minHeight:180,fontFamily:"monospace",fontSize:13}} value={form.content} onChange={e=>setForm({...form,content:e.target.value})} placeholder={"## Heading\n\nWrite your lesson content here.\n\n- Bullet point\n- Another point\n\n**Bold text** and *italic text* supported."}/>
+            <div className="form-hint">Use ## for headings, **bold**, *italic*, - for bullet lists.</div>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Content (Hindi)</label>
+            <textarea className="form-textarea" style={{minHeight:120,fontFamily:"monospace",fontSize:13}} value={form.contentHi} onChange={e=>setForm({...form,contentHi:e.target.value})} placeholder="हिंदी में सामग्री यहाँ लिखें..."/>
+          </div>
+        </>
+      )}
+
+      {tab==="content"&&form.contentType==="image"&&(
+        <>
+          <div className="form-group">
+            <label className="form-label">Image</label>
+            <UploadZone
+              accept="image/jpeg,image/png,image/webp"
+              label="Upload image (JPG/PNG/WebP, max 10MB)"
+              onFile={uploadImage}
+              preview={imageFile||({url:form.imageUrl})}
+              onRemove={()=>{setImageFile(null);setForm(f=>({...f,imageUrl:""}))}}
+              uploadPct={uploadPct}
+            />
+            <div className="form-hint" style={{marginTop:8}}>Or paste a URL:</div>
+            <input className="form-input" style={{marginTop:4}} value={form.imageUrl} onChange={e=>{setForm({...form,imageUrl:e.target.value});e.target.value&&setImageFile({url:e.target.value})}} placeholder="https://…"/>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Caption (English)</label>
+            <input className="form-input" value={form.content} onChange={e=>setForm({...form,content:e.target.value})} placeholder="Describe what the image shows"/>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Caption (Hindi)</label>
+            <input className="form-input" value={form.contentHi} onChange={e=>setForm({...form,contentHi:e.target.value})}/>
+          </div>
+        </>
+      )}
+
+      {/* ─ Settings tab ─ */}
+      {tab==="settings"&&(
+        <>
+          <div className="form-group">
+            <label style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
+              <input type="checkbox" checked={form.isRequired} onChange={e=>setForm({...form,isRequired:e.target.checked})} style={{width:18,height:18,accentColor:"var(--primary)"}}/>
+              <div>
+                <div style={{fontWeight:600}}>Required lesson</div>
+                <div style={{fontSize:12,color:"var(--muted)"}}>Workers must complete this lesson to finish the module. Uncheck for optional bonus content.</div>
+              </div>
+            </label>
+          </div>
+        </>
+      )}
+    </Modal>
+  );
+}
+
+// ── Quiz Modal ────────────────────────────────────────────────────────────────
+function QuizModal({moduleId,onClose,onSaved}){
+  const [title,setTitle]=useState("Module Quiz");
+  const [passingScore,setPassingScore]=useState(70);
+  const [questions,setQuestions]=useState([
+    {question:"",questionHi:"",options:["","","",""],optionsHi:["","","",""],correctIndex:0,explanation:"",explanationHi:""},
+  ]);
+  const [saving,setSaving]=useState(false);
+  const [err,setErr]=useState("");
+
+  const addQuestion=()=>setQuestions(qs=>[...qs,{question:"",questionHi:"",options:["","","",""],optionsHi:["","","",""],correctIndex:0,explanation:"",explanationHi:""}]);
+  const removeQuestion=i=>setQuestions(qs=>qs.filter((_,idx)=>idx!==i));
+  const updateQ=(i,field,val)=>setQuestions(qs=>qs.map((q,idx)=>idx===i?{...q,[field]:val}:q));
+  const updateOption=(qi,oi,val,hi=false)=>setQuestions(qs=>qs.map((q,idx)=>{
+    if(idx!==qi)return q;
+    const arr=hi?[...(q.optionsHi||["","","",""])]:([...q.options]);
+    arr[oi]=val;
+    return{...q,[hi?"optionsHi":"options"]:arr};
+  }));
+
+  const save=async()=>{
+    if(!title){setErr("Quiz title required");return}
+    for(let i=0;i<questions.length;i++){
+      const q=questions[i];
+      if(!q.question){setErr(`Question ${i+1}: English text required`);return}
+      if(q.options.some(o=>!o.trim())){setErr(`Question ${i+1}: All 4 options must be filled in`);return}
+    }
+    setSaving(true);
+    try{
+      await api.post(`/api/v1/quiz/admin/module/${moduleId}`,{title,passingScore,questions});
+      onSaved();
+    }catch(e){setErr(e.message)}finally{setSaving(false)};
+  };
+
+  return(
+    <Modal title="Build Quiz" onClose={onClose} wide
+      footer={<>
+        <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
+        <button className="btn btn-primary" onClick={save} disabled={saving}>{saving?<Spinner/>:"Save Quiz"}</button>
+      </>}>
+      {err&&<Alert msg={err} onClose={()=>setErr("")}/>}
+
+      <div className="form-row" style={{marginBottom:16}}>
+        <div className="form-group" style={{marginBottom:0}}>
+          <label className="form-label">Quiz Title</label>
+          <input className="form-input" value={title} onChange={e=>setTitle(e.target.value)}/>
+        </div>
+        <div className="form-group" style={{marginBottom:0}}>
+          <label className="form-label">Passing Score (%)</label>
+          <input className="form-input" type="number" min={1} max={100} value={passingScore} onChange={e=>setPassingScore(parseInt(e.target.value)||70)}/>
+          <div className="form-hint">Workers need this % to pass and earn their certificate.</div>
+        </div>
+      </div>
+
+      {questions.map((q,qi)=>(
+        <div key={qi} className="quiz-question">
+          <div className="quiz-q-num" style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <span>Question {qi+1}</span>
+            {questions.length>1&&<button onClick={()=>removeQuestion(qi)} style={{background:"none",color:"var(--error)",fontWeight:700,cursor:"pointer",fontSize:13}}>Remove</button>}
+          </div>
+
+          <div className="form-row" style={{marginBottom:10}}>
+            <div>
+              <input className="form-input" value={q.question} onChange={e=>updateQ(qi,"question",e.target.value)} placeholder="Question text (English) *"/>
+            </div>
+            <div>
+              <input className="form-input" value={q.questionHi} onChange={e=>updateQ(qi,"questionHi",e.target.value)} placeholder="प्रश्न (Hindi — optional)"/>
+            </div>
+          </div>
+
+          <div style={{fontSize:11,color:"var(--muted)",marginBottom:6,fontWeight:600}}>
+            OPTIONS — Click the radio button to mark the correct answer ✓
+          </div>
+
+          {[0,1,2,3].map(oi=>(
+            <div key={oi} className={`quiz-option${q.correctIndex===oi?" correct":""}`}>
+              <input type="radio" name={`correct-${qi}`} checked={q.correctIndex===oi} onChange={()=>updateQ(qi,"correctIndex",oi)}/>
+              <input className="quiz-option-text" value={q.options[oi]||""} onChange={e=>updateOption(qi,oi,e.target.value)} placeholder={`Option ${oi+1} (English) *`}/>
+              <input style={{width:140,padding:"4px 8px",border:"1px solid var(--border)",borderRadius:4,fontSize:12}} value={(q.optionsHi||[])[oi]||""} onChange={e=>updateOption(qi,oi,e.target.value,true)} placeholder="Hindi (optional)"/>
+            </div>
+          ))}
+
+          <div className="form-row" style={{marginTop:10}}>
+            <div>
+              <input className="form-input" value={q.explanation} onChange={e=>updateQ(qi,"explanation",e.target.value)} placeholder="Explanation (shown after quiz — optional)"/>
+            </div>
+            <div>
+              <input className="form-input" value={q.explanationHi} onChange={e=>updateQ(qi,"explanationHi",e.target.value)} placeholder="व्याख्या (Hindi)"/>
+            </div>
+          </div>
+        </div>
+      ))}
+
+      <button className="btn btn-secondary" style={{width:"100%",justifyContent:"center",marginTop:4}} onClick={addQuestion}>
+        + Add Another Question
+      </button>
+    </Modal>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// WORKERS PAGE
+// ════════════════════════════════════════════════════════════════════════════════
+function WorkersPage(){
+  const {data:workers,loading}=useFetch("/api/v1/admin/workers");
+  const [selected,setSelected]=useState(null);
+  const {data:workerProgress}=useFetch(selected?`/api/v1/admin/workers/${selected.id}/progress`:null,[selected?.id]);
+  const [search,setSearch]=useState("");
+  const [notifModal,setNotifModal]=useState(false);
+  const [notifForm,setNotifForm]=useState({title:"",body:""});
+  const [notifSending,setNotifSending]=useState(false);
+  const [notifMsg,setNotifMsg]=useState(null);
+
+  const sendNotif=async()=>{
+    setNotifSending(true);
+    try{const r=await api.post("/api/v1/admin/notify/broadcast",notifForm);setNotifMsg({type:"success",text:`Sent to ${r.sent} devices`});}
+    catch(e){setNotifMsg({type:"error",text:e.message})}
+    finally{setNotifSending(false)};
+  };
+
+  const filtered=(workers||[]).filter(w=>
+    w.displayName.toLowerCase().includes(search.toLowerCase())||
+    w.username.toLowerCase().includes(search.toLowerCase())
+  );
+
+  return(
+    <div>
+      {notifModal&&(
+        <Modal title="📣 Broadcast Notification" onClose={()=>setNotifModal(false)}
+          footer={<><button className="btn btn-secondary" onClick={()=>setNotifModal(false)}>Cancel</button><button className="btn btn-primary" onClick={sendNotif} disabled={notifSending}>{notifSending?<Spinner/>:"Send to All Workers"}</button></>}>
+          {notifMsg&&<Alert type={notifMsg.type} msg={notifMsg.text} onClose={()=>setNotifMsg(null)}/>}
+          <div className="alert alert-warn">⚠️ This will send a push notification to ALL registered worker devices.</div>
+          <div className="form-group"><label className="form-label">Title<span className="req">*</span></label><input className="form-input" value={notifForm.title} onChange={e=>setNotifForm({...notifForm,title:e.target.value})} placeholder="e.g. New Safety Course Available!"/></div>
+          <div className="form-group"><label className="form-label">Message<span className="req">*</span></label><textarea className="form-textarea" value={notifForm.body} onChange={e=>setNotifForm({...notifForm,body:e.target.value})} placeholder="e.g. A new course on fire safety has been published. Start learning now!"/></div>
+        </Modal>
+      )}
+
+      <div className="sec-hd">
+        <input className="form-input" style={{maxWidth:280}} placeholder="Search workers…" value={search} onChange={e=>setSearch(e.target.value)}/>
+        <div style={{display:"flex",gap:8}}>
+          <span style={{color:"var(--muted)",fontSize:13,alignSelf:"center"}}>{filtered.length} workers</span>
+          <button className="btn btn-primary" onClick={()=>setNotifModal(true)}>📣 Broadcast Notification</button>
+        </div>
+      </div>
+
+      <div style={{display:"flex",gap:16,alignItems:"flex-start"}}>
+        <div style={{flex:2}}>
+          <div className="card">
+            {loading?<div style={{textAlign:"center",padding:40}}><Spinner/></div>:(
+              <div className="table-wrap">
+                <table>
+                  <thead><tr><th>Worker</th><th>Username</th><th>Lang</th><th>Phone</th><th>Last Login</th><th>Status</th><th></th></tr></thead>
+                  <tbody>
+                    {filtered.map(w=>(
+                      <tr key={w.id} style={{cursor:"pointer"}} onClick={()=>setSelected(w===selected?null:w)}>
+                        <td>
+                          <div style={{display:"flex",alignItems:"center",gap:8}}>
+                            <div style={{width:36,height:36,borderRadius:"50%",background:"var(--primary)",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,fontSize:14,flexShrink:0}}>{w.displayName[0].toUpperCase()}</div>
+                            <div><div style={{fontWeight:600}}>{w.displayName}</div></div>
+                          </div>
+                        </td>
+                        <td style={{color:"var(--muted)"}}>@{w.username}</td>
+                        <td><span className="badge b-blue">{(w.preferredLang||"en").toUpperCase()}</span></td>
+                        <td style={{fontSize:12,color:"var(--muted)"}}>{w.phoneNumber||"—"}</td>
+                        <td style={{fontSize:12,color:"var(--muted)"}}>{w.lastLoginAt?new Date(w.lastLoginAt).toLocaleDateString("en-IN"):"Never"}</td>
+                        <td><span className={`badge ${w.isActive?"b-green":"b-red"}`}>{w.isActive?"Active":"Inactive"}</span></td>
+                        <td><button className="btn btn-primary btn-sm">{selected?.id===w.id?"Hide":"View →"}</button></td>
+                      </tr>
+                    ))}
+                    {filtered.length===0&&<tr><td colSpan={7} style={{textAlign:"center",color:"var(--muted)",padding:32}}>No workers yet</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {selected&&(
+          <div style={{width:280,flexShrink:0}}>
+            <div className="card">
+              <div style={{textAlign:"center",marginBottom:16}}>
+                <div style={{width:60,height:60,borderRadius:"50%",background:"var(--primary)",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:22,margin:"0 auto 8px"}}>{selected.displayName[0].toUpperCase()}</div>
+                <div style={{fontWeight:700,fontSize:15}}>{selected.displayName}</div>
+                <div style={{color:"var(--muted)",fontSize:12}}>@{selected.username}</div>
+                <div style={{color:"var(--muted)",fontSize:12}}>Joined {new Date(selected.createdAt).toLocaleDateString("en-IN")}</div>
+              </div>
+              <div style={{borderTop:"1px solid var(--border)",paddingTop:12}}>
+                <div style={{fontSize:11,fontWeight:700,color:"var(--muted)",marginBottom:8,textTransform:"uppercase",letterSpacing:.5}}>Progress</div>
+                {!workerProgress&&<div style={{textAlign:"center"}}><Spinner/></div>}
+                {workerProgress?.moduleProgress?.length===0&&<div style={{color:"var(--muted)",fontSize:13}}>No progress yet</div>}
+                {(workerProgress?.moduleProgress||[]).slice(0,8).map(mp=>(
+                  <div key={mp.moduleId} style={{marginBottom:8,padding:"8px 10px",background:"var(--bg)",borderRadius:8}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:2}}>
+                      <span className={`badge ${mp.quizPassed?"b-green":mp.completedAt?"b-blue":"b-gray"}`} style={{fontSize:11}}>
+                        {mp.quizPassed?"✅ Passed":mp.completedAt?"Done":"In progress"}
+                      </span>
+                      {mp.quizScore!=null&&<span style={{fontSize:11,color:"var(--muted)"}}>{mp.quizScore}%</span>}
+                    </div>
+                    <div style={{fontSize:11,color:"var(--muted)"}}>{new Date(mp.startedAt).toLocaleDateString("en-IN")}</div>
+                  </div>
+                ))}
+                {(workerProgress?.certificates||[]).length>0&&(<>
+                  <div style={{fontSize:11,fontWeight:700,color:"var(--muted)",margin:"12px 0 8px",textTransform:"uppercase",letterSpacing:.5}}>Certificates</div>
+                  {workerProgress.certificates.map(c=>(
+                    <div key={c.id} style={{padding:"8px 10px",background:"#fff7ed",borderRadius:8,marginBottom:6,fontSize:12}}>
+                      🏆 {c.certificateNumber}
+                      <div style={{color:"var(--muted)",marginTop:2}}>{new Date(c.earnedAt).toLocaleDateString("en-IN")}</div>
+                    </div>
+                  ))}
+                </>)}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// ROOT APP
+// ════════════════════════════════════════════════════════════════════════════════
+const PAGES=[
+  {id:"dashboard",label:"Dashboard",icon:"📊"},
+  {id:"courses",label:"Courses",icon:"📚"},
+  {id:"content",label:"Content Builder",icon:"🎬"},
+  {id:"workers",label:"Workers",icon:"👷"},
+];
+
+function App(){
+  const [user,setUser]=useState(()=>{const s=localStorage.getItem("fs_user");return s?JSON.parse(s):null});
+  const [page,setPage]=useState("dashboard");
+
+  const handleLogin=u=>{setUser(u);localStorage.setItem("fs_user",JSON.stringify(u))};
+  const handleLogout=()=>{clearTok();localStorage.removeItem("fs_user");setUser(null)};
+
+  if(!user||!_at)return <LoginPage onLogin={handleLogin}/>;
+
+  const TITLES={dashboard:"Dashboard",courses:"Course Management",content:"Content Builder",workers:"Workers & Progress"};
+  const CurPage={dashboard:DashboardPage,courses:CoursesPage,content:ContentPage,workers:WorkersPage}[page];
+
+  return(
+    <div style={{display:"flex"}}>
+      <div className="sidebar">
+        <div className="sb-brand"><div className="sb-logo">🦺 FastSewa</div><div className="sb-sub">Admin Panel</div></div>
+        <nav className="sb-nav">
+          {PAGES.map(p=>(
+            <div key={p.id} className={`nav-item${page===p.id?" active":""}`} onClick={()=>setPage(p.id)}>
+              <span className="nav-icon">{p.icon}</span>{p.label}
+            </div>
+          ))}
+        </nav>
+        <div className="sb-foot">
+          <div className="u-chip">
+            <div className="u-av">{user.displayName?.[0]?.toUpperCase()||"A"}</div>
+            <div><div style={{fontSize:13,fontWeight:600,color:"#F9FAFB"}}>{user.displayName}</div><div style={{fontSize:11,color:"#9CA3AF"}}>{user.role}</div></div>
+          </div>
+          <button className="btn btn-secondary" style={{width:"100%",marginTop:10,justifyContent:"center"}} onClick={handleLogout}>Log Out</button>
+        </div>
+      </div>
+      <div className="main">
+        <div className="topbar">
+          <div className="page-title">{TITLES[page]}</div>
+          <span style={{fontSize:12,color:"var(--muted)"}}>{API}</span>
+        </div>
+        <div className="content"><CurPage/></div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>

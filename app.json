@@ -1,0 +1,61 @@
+{
+  "expo": {
+    "name": "FastSewa Training",
+    "slug": "fastsewa-training",
+    "version": "2.0.0",
+    "orientation": "portrait",
+    "icon": "./client/assets/images/icon.png",
+    "scheme": "fastsewa",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./client/assets/images/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FF6B2C"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.fastsewa.training"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./client/assets/images/adaptive-icon.png",
+        "backgroundColor": "#FF6B2C"
+      },
+      "package": "com.fastsewa.training",
+      "permissions": []
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single",
+      "favicon": "./client/assets/images/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-splash-screen",
+        {
+          "image": "./client/assets/images/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#FF6B2C"
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./client/assets/images/icon.png",
+          "color": "#FF6B2C",
+          "sounds": [],
+          "mode": "production"
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "eas": {
+        "projectId": "YOUR_EAS_PROJECT_ID"
+      }
+    }
+  }
+}
