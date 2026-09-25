@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef } from "react";
 import {
   View, StyleSheet, ScrollView, Pressable, ActivityIndicator, Image,
 } from "react-native";
@@ -36,7 +36,7 @@ export default function LessonDetailScreen() {
   const { lessonId } = route.params;
 
   const videoProgress = useRef(0);
-  const saveInterval = useRef<ReturnType<typeof setInterval>>();
+  const saveInterval = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const { data: lesson, isLoading } = useQuery({
     queryKey: ["lesson", lessonId],
@@ -57,18 +57,21 @@ export default function LessonDetailScreen() {
       qc.invalidateQueries({ queryKey: ["module-progress"] });
     },
   });
+  const { mutate: saveProgress } = progressMut; // stable fn ref, safe in deps below
 
   // Save video progress every 5 seconds
   useEffect(() => {
     if (lesson?.contentType === "video") {
       saveInterval.current = setInterval(() => {
         if (videoProgress.current > 0 && !resumeData?.completed) {
-          progressMut.mutate({ videoProgressSeconds: videoProgress.current });
+          saveProgress({ videoProgressSeconds: videoProgress.current });
         }
       }, 5000);
     }
-    return () => clearInterval(saveInterval.current);
-  }, [lesson, resumeData?.completed]);
+    return () => {
+      if (saveInterval.current) clearInterval(saveInterval.current);
+    };
+  }, [lesson, resumeData?.completed, saveProgress]);
 
   const handleMarkComplete = () => {
     progressMut.mutate(
@@ -84,7 +87,7 @@ export default function LessonDetailScreen() {
       const data = JSON.parse(event.nativeEvent.data);
       if (data.type === "progress") videoProgress.current = data.seconds;
       if (data.type === "complete") {
-        clearInterval(saveInterval.current);
+        if (saveInterval.current) clearInterval(saveInterval.current);
         progressMut.mutate({ completed: true, videoProgressSeconds: videoProgress.current });
         qc.invalidateQueries({ queryKey: ["module-progress"] });
       }

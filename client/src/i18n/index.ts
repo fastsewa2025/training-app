@@ -99,11 +99,32 @@ const resources = {
       noAccount: "No account? Register",
       loginError: "Invalid username or password",
       registerError: "Could not create account",
+      forgotPassword: "Forgot password?",
+      resetPasswordTitle: "Reset Password",
+      forgotPasswordPrompt: "Enter the email on your account and we'll send you a reset code.",
+      email: "Email",
+      sendCodeBtn: "Send Reset Code",
+      codeSentTitle: "Check your email",
+      codeSentMessage: "If that email is registered, a reset code is on its way.",
+      resetCode: "Reset Code",
+      newPassword: "New Password",
+      resetPasswordBtn: "Reset Password",
+      resetSuccessTitle: "Password reset",
+      resetSuccessMessage: "Your password has been changed. Please log in.",
+      invalidCode: "Invalid or expired code",
+      backToLogin: "Back to Log In",
+      changePassword: "Change Password",
+      currentPassword: "Current Password",
+      changePasswordBtn: "Change Password",
+      changePasswordSuccess: "Password changed. Please log in again.",
+      currentPasswordWrong: "Current password is incorrect",
 
       // Errors
       somethingWrong: "Something went wrong",
       tryAgainLater: "Please try again later",
       networkError: "Network error. Check your connection.",
+      offlineShowingSaved: "You're offline — showing saved courses",
+      noCachedCourses: "No internet, and nothing saved yet. Connect once to load courses.",
     },
   },
   hi: {
@@ -200,11 +221,32 @@ const resources = {
       noAccount: "खाता नहीं है? रजिस्टर करें",
       loginError: "गलत यूज़रनेम या पासवर्ड",
       registerError: "खाता नहीं बन सका",
+      forgotPassword: "पासवर्ड भूल गए?",
+      resetPasswordTitle: "पासवर्ड रीसेट करें",
+      forgotPasswordPrompt: "अपने खाते की ईमेल डालें, हम आपको रीसेट कोड भेजेंगे।",
+      email: "ईमेल",
+      sendCodeBtn: "रीसेट कोड भेजें",
+      codeSentTitle: "अपनी ईमेल जांचें",
+      codeSentMessage: "अगर यह ईमेल रजिस्टर्ड है, तो रीसेट कोड भेजा जा रहा है।",
+      resetCode: "रीसेट कोड",
+      newPassword: "नया पासवर्ड",
+      resetPasswordBtn: "पासवर्ड रीसेट करें",
+      resetSuccessTitle: "पासवर्ड रीसेट हो गया",
+      resetSuccessMessage: "आपका पासवर्ड बदल दिया गया है। कृपया लॉग इन करें।",
+      invalidCode: "गलत या समय-सीमा समाप्त कोड",
+      backToLogin: "लॉग इन पर वापस जाएं",
+      changePassword: "पासवर्ड बदलें",
+      currentPassword: "मौजूदा पासवर्ड",
+      changePasswordBtn: "पासवर्ड बदलें",
+      changePasswordSuccess: "पासवर्ड बदल दिया गया। कृपया दोबारा लॉग इन करें।",
+      currentPasswordWrong: "मौजूदा पासवर्ड गलत है",
 
       // Errors
       somethingWrong: "कुछ गड़बड़ हुई",
       tryAgainLater: "बाद में फिर कोशिश करें",
       networkError: "नेटवर्क त्रुटि। कनेक्शन जांचें।",
+      offlineShowingSaved: "आप ऑफ़लाइन हैं — सेव किए गए कोर्स दिखा रहे हैं",
+      noCachedCourses: "इंटरनेट नहीं है, और अभी कुछ सेव नहीं है। कोर्स लोड करने के लिए एक बार कनेक्ट करें।",
     },
   },
 };
@@ -228,6 +270,9 @@ const languageDetector = {
   },
 };
 
+// i18next's default export is the instance itself; .use() here is its
+// documented chainable API, not the package's same-named named export.
+/* eslint-disable import/no-named-as-default-member */
 i18n
   .use(languageDetector)
   .use(initReactI18next)
@@ -237,5 +282,6 @@ i18n
     interpolation: { escapeValue: false },
     compatibilityJSON: "v4",
   });
+/* eslint-enable import/no-named-as-default-member */
 
 export default i18n;

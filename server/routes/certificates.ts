@@ -4,6 +4,7 @@ import { certificates, users, courses } from "@shared/schema";
 import { eq, and } from "drizzle-orm";
 import { requireAuth, AuthRequest } from "../middleware/auth";
 import { generateCertificatePDF } from "../services/certificate";
+import { paramStr } from "../utils/params";
 
 export const certificatesRouter = Router();
 certificatesRouter.use(requireAuth);
@@ -43,7 +44,7 @@ certificatesRouter.get("/:id/pdf", async (req: AuthRequest, res: Response) => {
     .innerJoin(courses, eq(courses.id, certificates.courseId))
     .where(
       and(
-        eq(certificates.id, req.params.id),
+        eq(certificates.id, paramStr(req.params.id)),
         eq(certificates.userId, req.user!.id) // can only download own cert
       )
     )

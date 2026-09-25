@@ -7,6 +7,7 @@ export interface AuthUser {
   preferredLang: "en" | "hi";
   avatarUrl?: string;
   phoneNumber?: string;
+  email?: string;
   createdAt?: string;
 }
 
@@ -64,7 +65,7 @@ export interface Lesson {
   titleHi?: string;
   contentType: ContentType;
   videoUrl?: string;
-  videoProvider?: "youtube" | "cloudinary" | "s3";
+  videoProvider?: "youtube" | "cloudinary" | "s3" | "local";
   videoDurationSeconds?: number;
   content?: string;
   contentHi?: string;
@@ -155,4 +156,6 @@ export type RootStackParamList = {
   ModuleDetail: { moduleId: string };
   LessonDetail: { lessonId: string };
   Quiz: { moduleId: string };
+  Search: undefined;
+  ChangePassword: undefined;
 };

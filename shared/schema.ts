@@ -12,7 +12,6 @@ import {
   index,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
-import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
@@ -57,6 +56,8 @@ export const users = pgTable(
     preferredLang: langEnum("preferred_lang").notNull().default("en"),
     expoPushToken: text("expo_push_token"),
     isActive: boolean("is_active").notNull().default(true),
+    passwordResetTokenHash: text("password_reset_token_hash"),
+    passwordResetExpiresAt: timestamp("password_reset_expires_at"),
     createdAt: timestamp("created_at").notNull().default(sql`now()`),
     updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
     lastLoginAt: timestamp("last_login_at"),
@@ -133,7 +134,7 @@ export const lessons = pgTable(
     titleHi: text("title_hi"),
     contentType: contentTypeEnum("content_type").notNull(),
     videoUrl: text("video_url"),
-    videoProvider: text("video_provider"), // "youtube" | "cloudinary" | "s3"
+    videoProvider: text("video_provider"), // "youtube" | "cloudinary" | "s3" | "local"
     videoDurationSeconds: integer("video_duration_seconds"),
     content: text("content"), // Markdown
     contentHi: text("content_hi"),
@@ -365,6 +366,7 @@ export const registerSchema = z.object({
     .regex(/^[a-zA-Z0-9_]+$/, "Only letters, numbers and underscore"),
   password: z.string().min(8, "Password must be at least 8 characters"),
   displayName: z.string().min(1).max(60),
+  email: z.string().email().optional(),
   phoneNumber: z
     .string()
     .regex(/^\+?[0-9]{10,15}$/)
@@ -375,6 +377,21 @@ export const registerSchema = z.object({
 export const loginSchema = z.object({
   username: z.string().min(1),
   password: z.string().min(1),
+});
+
+export const forgotPasswordSchema = z.object({
+  email: z.string().email(),
+});
+
+export const resetPasswordSchema = z.object({
+  email: z.string().email(),
+  code: z.string().min(6).max(12),
+  newPassword: z.string().min(8, "Password must be at least 8 characters"),
+});
+
+export const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(8, "Password must be at least 8 characters"),
 });
 
 export const createCourseSchema = z.object({
@@ -413,7 +430,7 @@ export const createLessonSchema = z.object({
   titleHi: z.string().optional(),
   contentType: z.enum(["video", "text", "image", "quiz"]),
   videoUrl: z.string().url().optional(),
-  videoProvider: z.enum(["youtube", "cloudinary", "s3"]).optional(),
+  videoProvider: z.enum(["youtube", "cloudinary", "s3", "local"]).optional(),
   videoDurationSeconds: z.number().int().positive().optional(),
   content: z.string().optional(),
   contentHi: z.string().optional(),

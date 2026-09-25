@@ -32,7 +32,7 @@ export function ProgressBar({
     } else {
       anim.setValue(Math.min(Math.max(percent, 0), 100));
     }
-  }, [percent]);
+  }, [percent, anim, animate]);
 
   const width = anim.interpolate({
     inputRange: [0, 100],

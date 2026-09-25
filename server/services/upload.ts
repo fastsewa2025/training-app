@@ -3,7 +3,7 @@
  * Supports Cloudinary (default) and AWS S3
  * Falls back to local /uploads for development
  */
-import { createReadStream, mkdirSync } from "fs";
+import { mkdirSync } from "fs";
 import { join } from "path";
 import { randomBytes } from "crypto";
 
@@ -13,11 +13,30 @@ const PROVIDER = process.env.CLOUDINARY_CLOUD_NAME
   ? "s3"
   : "local";
 
+if (PROVIDER === "local") {
+  const banner = "!".repeat(78);
+  const msg =
+    `${banner}\n` +
+    "! [Upload] No CLOUDINARY_CLOUD_NAME or AWS_S3_BUCKET configured.\n" +
+    "! Uploaded videos/images will be written to local disk (public/uploads)\n" +
+    "! and are NOT durable — they will be LOST on the next redeploy or\n" +
+    "! container restart unless a volume is mounted for that path.\n" +
+    "! Set up Cloudinary or S3 before real users start uploading course\n" +
+    "! content. See .env.example.\n" +
+    `${banner}`;
+  if (process.env.NODE_ENV === "production") {
+    console.error(msg);
+  } else {
+    console.warn(msg);
+  }
+}
+
 export interface UploadResult {
   url: string;
   publicId: string;
   bytes: number;
   format: string;
+  provider: "cloudinary" | "s3" | "local";
 }
 
 // ── Cloudinary ─────────────────────────────────────────────────────────────
@@ -25,7 +44,7 @@ async function uploadToCloudinary(
   buffer: Buffer,
   folder: string,
   resourceType: "image" | "video" | "raw" = "auto" as any
-): Promise<UploadResult> {
+): Promise<Omit<UploadResult, "provider">> {
   const { v2: cloudinary } = await import("cloudinary");
   cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME!,
@@ -65,7 +84,7 @@ async function uploadToS3(
   fileName: string,
   mimeType: string,
   folder: string
-): Promise<UploadResult> {
+): Promise<Omit<UploadResult, "provider">> {
   const { S3Client, PutObjectCommand } = await import("@aws-sdk/client-s3");
   const client = new S3Client({ region: process.env.AWS_REGION || "ap-south-1" });
 
@@ -90,7 +109,7 @@ async function uploadLocal(
   buffer: Buffer,
   fileName: string,
   folder: string
-): Promise<UploadResult> {
+): Promise<Omit<UploadResult, "provider">> {
   const uploadDir = join(process.cwd(), "public", "uploads", folder);
   mkdirSync(uploadDir, { recursive: true });
 
@@ -118,14 +137,17 @@ export async function uploadMedia(
 
   if (PROVIDER === "cloudinary") {
     const resourceType = isVideo ? "video" : isImage ? "image" : "raw";
-    return uploadToCloudinary(buffer, folder, resourceType);
+    const result = await uploadToCloudinary(buffer, folder, resourceType);
+    return { ...result, provider: "cloudinary" };
   }
 
   if (PROVIDER === "s3") {
-    return uploadToS3(buffer, fileName, mimeType, folder);
+    const result = await uploadToS3(buffer, fileName, mimeType, folder);
+    return { ...result, provider: "s3" };
   }
 
-  return uploadLocal(buffer, fileName, folder);
+  const result = await uploadLocal(buffer, fileName, folder);
+  return { ...result, provider: "local" };
 }
 
 export { PROVIDER as uploadProvider };

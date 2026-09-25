@@ -1,12 +1,15 @@
 import { Router, Request, Response } from "express";
 import bcrypt from "bcryptjs";
-import { createHash } from "crypto";
+import { createHash, randomInt } from "crypto";
 import { db } from "../db";
 import {
   users,
   refreshTokens,
   registerSchema,
   loginSchema,
+  forgotPasswordSchema,
+  resetPasswordSchema,
+  changePasswordSchema,
 } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import {
@@ -15,6 +18,7 @@ import {
   AuthRequest,
 } from "../middleware/auth";
 import jwt from "jsonwebtoken";
+import { sendPasswordResetEmail } from "../services/email";
 
 export const authRouter = Router();
 
@@ -24,6 +28,15 @@ function hashToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
 }
 
+// Unambiguous charset — no 0/O, 1/I/L — so a code is easy to read back off
+// an email and type correctly.
+const CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+function generateResetCode(length = 8): string {
+  let code = "";
+  for (let i = 0; i < length; i++) code += CODE_CHARS[randomInt(CODE_CHARS.length)];
+  return code;
+}
+
 // POST /api/v1/auth/register
 authRouter.post("/register", async (req: Request, res: Response) => {
   const result = registerSchema.safeParse(req.body);
@@ -31,7 +44,7 @@ authRouter.post("/register", async (req: Request, res: Response) => {
     return res.status(400).json({ error: result.error.flatten() });
   }
 
-  const { username, password, displayName, phoneNumber, preferredLang } =
+  const { username, password, displayName, email, phoneNumber, preferredLang } =
     result.data;
 
   const existing = await db
@@ -44,6 +57,17 @@ authRouter.post("/register", async (req: Request, res: Response) => {
     return res.status(409).json({ error: "Username already taken" });
   }
 
+  if (email) {
+    const existingEmail = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.email, email))
+      .limit(1);
+    if (existingEmail.length > 0) {
+      return res.status(409).json({ error: "Email already in use" });
+    }
+  }
+
   const passwordHash = await bcrypt.hash(password, 12);
 
   const [user] = await db
@@ -52,6 +76,7 @@ authRouter.post("/register", async (req: Request, res: Response) => {
       username,
       passwordHash,
       displayName,
+      email,
       phoneNumber,
       preferredLang: preferredLang || "en",
       role: "worker",
@@ -62,6 +87,7 @@ authRouter.post("/register", async (req: Request, res: Response) => {
       displayName: users.displayName,
       role: users.role,
       preferredLang: users.preferredLang,
+      email: users.email,
     });
 
   const { accessToken, refreshToken } = generateTokens(user.id, user.role);
@@ -204,6 +230,7 @@ authRouter.get("/me", requireAuth, async (req: AuthRequest, res: Response) => {
       preferredLang: users.preferredLang,
       avatarUrl: users.avatarUrl,
       phoneNumber: users.phoneNumber,
+      email: users.email,
       createdAt: users.createdAt,
     })
     .from(users)
@@ -216,7 +243,7 @@ authRouter.get("/me", requireAuth, async (req: AuthRequest, res: Response) => {
 
 // PATCH /api/v1/auth/me - update profile
 authRouter.patch("/me", requireAuth, async (req: AuthRequest, res: Response) => {
-  const { displayName, preferredLang, phoneNumber, expoPushToken } = req.body;
+  const { displayName, preferredLang, phoneNumber, email, expoPushToken } = req.body;
 
   const updates: Partial<typeof users.$inferInsert> = {};
   if (displayName) updates.displayName = String(displayName).slice(0, 60);
@@ -224,6 +251,21 @@ authRouter.patch("/me", requireAuth, async (req: AuthRequest, res: Response) => 
     updates.preferredLang = preferredLang;
   if (phoneNumber) updates.phoneNumber = String(phoneNumber);
   if (expoPushToken) updates.expoPushToken = String(expoPushToken);
+  if (email) {
+    const emailStr = String(email).trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailStr)) {
+      return res.status(400).json({ error: "Invalid email address" });
+    }
+    const existingEmail = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.email, emailStr))
+      .limit(1);
+    if (existingEmail.length > 0 && existingEmail[0].id !== req.user!.id) {
+      return res.status(409).json({ error: "Email already in use" });
+    }
+    updates.email = emailStr;
+  }
   updates.updatedAt = new Date();
 
   const [updated] = await db
@@ -235,7 +277,131 @@ authRouter.patch("/me", requireAuth, async (req: AuthRequest, res: Response) => 
       displayName: users.displayName,
       preferredLang: users.preferredLang,
       phoneNumber: users.phoneNumber,
+      email: users.email,
     });
 
   res.json(updated);
 });
+
+// POST /api/v1/auth/forgot-password
+authRouter.post("/forgot-password", async (req: Request, res: Response) => {
+  const result = forgotPasswordSchema.safeParse(req.body);
+  if (!result.success) {
+    return res.status(400).json({ error: result.error.flatten() });
+  }
+  const { email } = result.data;
+
+  const [user] = await db
+    .select({ id: users.id, displayName: users.displayName })
+    .from(users)
+    .where(eq(users.email, email))
+    .limit(1);
+
+  // Same response whether or not the email is on file, so this endpoint
+  // can't be used to enumerate registered accounts.
+  if (user) {
+    const code = generateResetCode();
+    await db
+      .update(users)
+      .set({
+        passwordResetTokenHash: hashToken(code),
+        passwordResetExpiresAt: new Date(Date.now() + 30 * 60 * 1000),
+      })
+      .where(eq(users.id, user.id));
+
+    try {
+      await sendPasswordResetEmail(email, code, user.displayName);
+    } catch (err) {
+      console.error("[Email] Failed to send reset email:", err);
+    }
+  }
+
+  res.json({ message: "If that email is registered, a reset code has been sent." });
+});
+
+// POST /api/v1/auth/reset-password
+authRouter.post("/reset-password", async (req: Request, res: Response) => {
+  const result = resetPasswordSchema.safeParse(req.body);
+  if (!result.success) {
+    return res.status(400).json({ error: result.error.flatten() });
+  }
+  const { email, code, newPassword } = result.data;
+
+  const [user] = await db
+    .select({
+      id: users.id,
+      passwordResetTokenHash: users.passwordResetTokenHash,
+      passwordResetExpiresAt: users.passwordResetExpiresAt,
+    })
+    .from(users)
+    .where(eq(users.email, email))
+    .limit(1);
+
+  const isValid =
+    !!user &&
+    !!user.passwordResetTokenHash &&
+    user.passwordResetTokenHash === hashToken(code) &&
+    !!user.passwordResetExpiresAt &&
+    user.passwordResetExpiresAt > new Date();
+
+  if (!isValid) {
+    return res.status(400).json({ error: "Invalid or expired reset code" });
+  }
+
+  const passwordHash = await bcrypt.hash(newPassword, 12);
+  await db
+    .update(users)
+    .set({
+      passwordHash,
+      passwordResetTokenHash: null,
+      passwordResetExpiresAt: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(users.id, user!.id));
+
+  // Reset = "I might not trust my old sessions" -> sign out everywhere.
+  await db.delete(refreshTokens).where(eq(refreshTokens.userId, user!.id));
+
+  res.json({ message: "Password reset successful. Please log in again." });
+});
+
+// POST /api/v1/auth/change-password — for a logged-in user who knows their
+// current password (distinct from forgot/reset-password, which is for when
+// they don't).
+authRouter.post(
+  "/change-password",
+  requireAuth,
+  async (req: AuthRequest, res: Response) => {
+    const result = changePasswordSchema.safeParse(req.body);
+    if (!result.success) {
+      return res.status(400).json({ error: result.error.flatten() });
+    }
+    const { currentPassword, newPassword } = result.data;
+
+    const [user] = await db
+      .select({ id: users.id, passwordHash: users.passwordHash })
+      .from(users)
+      .where(eq(users.id, req.user!.id))
+      .limit(1);
+
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    const valid = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!valid) {
+      return res.status(401).json({ error: "Current password is incorrect" });
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+    await db
+      .update(users)
+      .set({ passwordHash, updatedAt: new Date() })
+      .where(eq(users.id, user.id));
+
+    // Same policy as reset-password: sign out everywhere, current session
+    // included, so there's one consistent "you changed your password" story
+    // rather than a quietly-still-valid access token elsewhere.
+    await db.delete(refreshTokens).where(eq(refreshTokens.userId, user.id));
+
+    res.json({ message: "Password changed. Please log in again." });
+  }
+);

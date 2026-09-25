@@ -1,8 +1,9 @@
 import { Router, Response } from "express";
 import { db } from "../db";
 import { courses, modules, lessons, courseEnrollments } from "@shared/schema";
-import { eq, and, asc, or } from "drizzle-orm";
-import { requireAuth, requireRole, AuthRequest } from "../middleware/auth";
+import { eq, and, asc } from "drizzle-orm";
+import { requireAuth, AuthRequest } from "../middleware/auth";
+import { paramStr } from "../utils/params";
 
 export const coursesRouter = Router();
 coursesRouter.use(requireAuth);
@@ -15,7 +16,7 @@ coursesRouter.get("/module/:moduleId", async (req: AuthRequest, res: Response) =
   const [mod] = await db
     .select()
     .from(modules)
-    .where(eq(modules.id, req.params.moduleId))
+    .where(eq(modules.id, paramStr(req.params.moduleId)))
     .limit(1);
 
   if (!mod) return res.status(404).json({ error: "Module not found" });
@@ -34,7 +35,7 @@ coursesRouter.get("/lesson/:lessonId", async (req: AuthRequest, res: Response) =
   const [lesson] = await db
     .select()
     .from(lessons)
-    .where(eq(lessons.id, req.params.lessonId))
+    .where(eq(lessons.id, paramStr(req.params.lessonId)))
     .limit(1);
 
   if (!lesson) return res.status(404).json({ error: "Lesson not found" });
@@ -99,11 +100,12 @@ coursesRouter.get("/", async (req: AuthRequest, res: Response) => {
 // GET /api/v1/courses/:id — course detail with modules+lessons
 coursesRouter.get("/:id", async (req: AuthRequest, res: Response) => {
   const isAdmin = req.user!.role === "admin" || req.user!.role === "trainer";
+  const courseId = paramStr(req.params.id);
 
   // Admins can view draft courses; workers only see published
   const where = isAdmin
-    ? eq(courses.id, req.params.id)
-    : and(eq(courses.id, req.params.id), eq(courses.isPublished, true));
+    ? eq(courses.id, courseId)
+    : and(eq(courses.id, courseId), eq(courses.isPublished, true));
 
   const [course] = await db.select().from(courses).where(where).limit(1);
   if (!course) return res.status(404).json({ error: "Course not found" });
@@ -154,7 +156,7 @@ coursesRouter.post("/:id/enroll", async (req: AuthRequest, res: Response) => {
   const [course] = await db
     .select({ id: courses.id })
     .from(courses)
-    .where(and(eq(courses.id, req.params.id), eq(courses.isPublished, true)))
+    .where(and(eq(courses.id, paramStr(req.params.id)), eq(courses.isPublished, true)))
     .limit(1);
 
   if (!course) return res.status(404).json({ error: "Course not found" });

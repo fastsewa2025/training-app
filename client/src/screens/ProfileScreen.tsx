@@ -7,12 +7,17 @@ import { useTranslation } from "react-i18next";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Feather } from "@expo/vector-icons";
 import * as Linking from "expo-linking";
+import { useNavigation } from "@react-navigation/native";
+import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 
 import { ThemedText } from "@/components/ThemedText";
 import { useTheme } from "@/hooks/useTheme";
 import { useAuth } from "@/hooks/useAuth";
 import { apiClient } from "@/lib/api";
 import { Colors, Spacing, BorderRadius, Typography } from "@/constants/theme";
+import { RootStackParamList } from "@/navigation/RootStackNavigator";
+
+type NavProp = NativeStackNavigationProp<RootStackParamList>;
 
 interface CertItem {
   id: string;
@@ -33,6 +38,7 @@ export default function ProfileScreen() {
   const { t, i18n } = useTranslation();
   const { user, logout, updateProfile } = useAuth();
   const { theme } = useTheme();
+  const navigation = useNavigation<NavProp>();
 
   const { data: certs = [], isLoading: certsLoading } = useQuery<CertItem[]>({
     queryKey: ["certificates"],
@@ -71,7 +77,7 @@ export default function ProfileScreen() {
   };
 
   const memberDate = user?.createdAt
-    ? new Date(user.createdAt as any).toLocaleDateString("en-IN", {
+    ? new Date(user.createdAt).toLocaleDateString("en-IN", {
         month: "short", year: "numeric",
       })
     : "";
@@ -207,6 +213,17 @@ export default function ProfileScreen() {
             })
           )}
         </View>
+
+        {/* Change Password */}
+        <Pressable
+          onPress={() => navigation.navigate("ChangePassword")}
+          style={[styles.logoutBtn, { borderColor: theme.border }]}
+        >
+          <Feather name="lock" size={18} color={theme.text} />
+          <ThemedText style={{ fontWeight: "600" }}>
+            {t("changePassword")}
+          </ThemedText>
+        </Pressable>
 
         {/* Logout */}
         <Pressable

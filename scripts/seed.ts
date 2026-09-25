@@ -10,7 +10,6 @@ import { db } from "../server/db";
 import {
   users, courses, modules, lessons, quizzes, quizQuestions,
 } from "../shared/schema";
-import { eq } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 
 async function seed() {

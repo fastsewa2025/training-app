@@ -66,7 +66,7 @@ export async function requireAuth(
 }
 
 export function requireRole(
-  ...roles: Array<"admin" | "trainer" | "worker">
+  ...roles: ("admin" | "trainer" | "worker")[]
 ) {
   return (req: AuthRequest, res: Response, next: NextFunction) => {
     if (!req.user || !roles.includes(req.user.role)) {

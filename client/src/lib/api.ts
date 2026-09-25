@@ -35,7 +35,7 @@ export class ApiError extends Error {
 }
 
 let isRefreshing = false;
-let refreshQueue: Array<(token: string | null) => void> = [];
+let refreshQueue: ((token: string | null) => void)[] = [];
 
 async function refreshAccessToken(): Promise<string | null> {
   if (isRefreshing) {

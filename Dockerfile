@@ -18,7 +18,11 @@ RUN npx esbuild server/index.ts \
       --packages=external \
       --bundle \
       --format=esm \
-      --outdir=dist
+      --outdir=dist \
+    # Scopes "type":"module" to just dist/, so esbuild's ESM output is
+    # recognized without warnings, without forcing ESM on the rest of the
+    # project (Metro/Babel/ESLint configs here are plain CommonJS).
+    && echo '{"type":"module"}' > dist/package.json
 
 # ── Stage 2: Production image ─────────────────────────────────────────────────
 FROM node:20-alpine AS production

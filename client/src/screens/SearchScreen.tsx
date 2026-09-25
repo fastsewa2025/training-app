@@ -32,7 +32,7 @@ const POPULAR_SEARCHES = [
 ];
 
 export default function SearchScreen() {
-  const { t, i18n } = useTranslation();
+  const { i18n } = useTranslation();
   const { theme } = useTheme();
   const navigation = useNavigation<NavProp>();
   const [query, setQuery] = useState("");
@@ -121,7 +121,7 @@ export default function SearchScreen() {
             <ActivityIndicator color={Colors.light.primary} style={{ marginTop: 40 }} />
           ) : (
             <ThemedText style={[styles.sectionTitle, { color: theme.textSecondary }]}>
-              {courses.length} result{courses.length !== 1 ? "s" : ""} for "{submitted}"
+              {courses.length} result{courses.length !== 1 ? "s" : ""} for “{submitted}”
             </ThemedText>
           )
         }

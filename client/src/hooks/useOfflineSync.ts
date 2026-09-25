@@ -6,7 +6,6 @@
 import { useState, useEffect, useCallback } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import NetInfo from "@react-native-community/netinfo";
-import { apiClient } from "@/lib/api";
 
 interface CacheEntry<T> {
   data: T;
@@ -89,9 +88,15 @@ export function useOfflineSync<T>(
     }
   }, [fetchFn, loadFromCache, saveToCache]);
 
+  // `deps` is caller-supplied on purpose (like a query key) so the caller
+  // controls exactly when a refetch happens. `load`'s identity changes
+  // whenever fetchFn does, so including it here would refire on every
+  // render instead of only when the caller's deps actually change.
+  /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
     load();
   }, deps);
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   return { data, loading, isStale, isOffline, error, refetch: load };
 }

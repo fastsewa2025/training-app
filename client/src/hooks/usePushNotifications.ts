@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { Platform, Alert } from "react-native";
+import { Platform } from "react-native";
 import * as Notifications from "expo-notifications";
 import * as Device from "expo-device";
+import Constants from "expo-constants";
 import { apiClient } from "@/lib/api";
 
 Notifications.setNotificationHandler({
@@ -14,8 +15,8 @@ Notifications.setNotificationHandler({
 
 export function usePushNotifications() {
   const [expoPushToken, setExpoPushToken] = useState<string>("");
-  const notifListener = useRef<Notifications.EventSubscription>();
-  const responseListener = useRef<Notifications.EventSubscription>();
+  const notifListener = useRef<Notifications.EventSubscription | null>(null);
+  const responseListener = useRef<Notifications.EventSubscription | null>(null);
 
   useEffect(() => {
     registerForPushNotificationsAsync().then((token) => {
@@ -72,10 +73,16 @@ async function registerForPushNotificationsAsync(): Promise<string | null> {
     return null;
   }
 
-  // Get token (requires a valid EAS project ID in app.json)
-  const tokenData = await Notifications.getExpoPushTokenAsync({
-    projectId: "YOUR_EAS_PROJECT_ID", // replace with real value from app.json
-  });
+  // Get token (requires a valid EAS project ID — set expo.extra.eas.projectId
+  // in app.json; `eas init` fills this in once you have an Expo account).
+  const projectId = Constants.expoConfig?.extra?.eas?.projectId;
+  if (!projectId || projectId === "YOUR_EAS_PROJECT_ID") {
+    console.warn(
+      "[Push] No EAS project ID configured (expo.extra.eas.projectId in app.json) — push disabled"
+    );
+    return null;
+  }
+  const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
 
   // Android requires a notification channel
   if (Platform.OS === "android") {

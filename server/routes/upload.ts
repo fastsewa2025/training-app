@@ -1,4 +1,4 @@
-import { Router, Response, Request } from "express";
+import { Router, Response } from "express";
 import multer from "multer";
 import { requireAuth, requireRole, AuthRequest } from "../middleware/auth";
 import { uploadMedia } from "../services/upload";
@@ -73,10 +73,6 @@ uploadRouter.post(
       "videos"
     );
 
-    res.json({
-      ...result,
-      provider: "cloudinary",
-      // Client should set videoProvider = "cloudinary" when saving the lesson
-    });
+    res.json(result);
   }
 );

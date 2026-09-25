@@ -1,347 +1,214 @@
-# 🦺 FastSewa Training Platform
+# FastSewa Training™ — Worker Training Platform
 
-> Production-grade construction worker training app — Udemy for construction sites.
-> **React Native (Expo)** mobile app + **Node.js/Express** API + **Admin Web Panel**
+> **Bilingual (Hindi/English) skills & safety training for construction workers** — course library, video/text lessons, quizzes, and auto-issued certificates, built for low-connectivity job sites
 
----
+FastSewa Training is the workforce-training arm of the FastSewa platform — a mobile-first learning system for onboarding and upskilling construction, electrical, and site-safety workers. Workers learn in their preferred language, trainers and admins author content and track progress from a lightweight web dashboard.
 
-## ✨ Features
-
-| Area | Feature |
-|------|---------|
-| 📱 **Mobile App** | React Native (Expo), iOS + Android |
-| 🌐 **Languages** | English + हिन्दी (Hindi) — switchable per user |
-| 🎓 **Training** | Courses → Modules → Lessons (video, text, image) |
-| ▶️ **Video** | YouTube embed + Cloudinary/S3, with resume-from-where-you-left-off |
-| ❓ **Quiz** | MCQ after each module, auto-scoring, Hindi explanations |
-| 🏆 **Certificates** | Auto-issued PDF certificate on course completion |
-| 🔐 **Auth** | JWT + bcrypt, refresh token rotation, role-based access |
-| 👥 **Roles** | Admin / Trainer / Worker — different capabilities |
-| 📊 **Admin Panel** | Web dashboard: courses CRUD, worker progress, analytics |
-| 🔔 **Notifications** | Expo push notifications (iOS + Android) |
-| 📶 **Offline** | AsyncStorage cache — view last-fetched data without internet |
-| 🐳 **DevOps** | Docker + docker-compose, GitHub Actions CI/CD |
-| 🚀 **Deploy** | Render.com (free tier ready) or DigitalOcean/AWS |
+[![Status](https://img.shields.io/badge/Status-Launch%20Ready-2e7d32?style=for-the-badge)]()
+[![Stack](https://img.shields.io/badge/Stack-Expo%20%2B%20Node%20%2B%20Postgres-0f172a?style=for-the-badge&logo=react)]()
 
 ---
 
-## 🏗️ Project Structure
+## 🚀 Features
+
+### For Workers
+| Feature | Description |
+|---|---|
+| 📚 Course Library | Browse by category — Safety, Basics, Tools, Electrical, Plumbing, Masonry, Equipment |
+| 🎥 Lessons | Video (YouTube or uploaded), text, and image content — every lesson in **English and Hindi** |
+| ❓ Quizzes | Multiple-choice, auto-scored, with bilingual feedback — a module only counts as complete once its quiz is passed, not just watched |
+| 🏆 Certificates | Auto-issued PDF certificate the moment a course hits 100% completion |
+| 📈 Progress Tracking | Per-lesson, per-module, and per-course completion, visible on the home screen |
+| 🌐 Offline Mode | Course list is cached locally — still browsable with no signal, with a clear "showing saved courses" indicator |
+| 🔔 Push Notifications | Course reminders and admin broadcasts via Expo push |
+| 🔑 Full Account Recovery | Email + code self-service reset, a separate change-password flow for logged-in users, and an admin-issued temporary-password fallback that needs no email at all |
+| 🗣️ Language Toggle | Switch the whole app between Hindi and English anytime from the profile screen |
+
+### For Admins / Trainers
+| Feature | Description |
+|---|---|
+| 🧑‍🏫 Content Authoring | Create courses → modules → lessons → quizzes, each field bilingual, from the admin dashboard |
+| 📊 Dashboard | Total workers, published courses, enrollments, completion rate at a glance |
+| 👷 Worker Management | View every worker's progress, deactivate accounts, reset a worker's password directly |
+| 📣 Broadcast | Push a notification to every registered device |
+| 📈 Analytics | Enrollment counts per course |
+
+---
+
+## 📁 Project Structure
 
 ```
 fastsewa-training/
-├── server/                  # Express API (Node.js + TypeScript)
-│   ├── index.ts             # Entry point, middleware
-│   ├── routes.ts            # Route registration + rate limiting
-│   ├── db.ts                # PostgreSQL connection (Drizzle ORM)
-│   ├── middleware/
-│   │   └── auth.ts          # JWT verify, requireAuth, requireRole
-│   ├── routes/
-│   │   ├── auth.ts          # register, login, refresh, me
-│   │   ├── courses.ts       # courses + module + lesson endpoints
-│   │   ├── progress.ts      # lesson progress, video resume, stats
-│   │   ├── quiz.ts          # MCQ submit + scoring
-│   │   ├── certificates.ts  # list + PDF download
-│   │   ├── admin.ts         # dashboard, worker management, CRUD
-│   │   └── upload.ts        # Cloudinary/S3/local media upload
-│   └── services/
-│       ├── certificate.ts   # PDF generation (pdfkit)
-│       ├── upload.ts        # Cloudinary + S3 + local
-│       └── notification.ts  # Expo push notifications
-│
-├── shared/
-│   └── schema.ts            # Drizzle schema + Zod validators (11 tables)
-│
-├── client/src/              # React Native (Expo) app
-│   ├── App.tsx              # Root component
-│   ├── navigation/
-│   │   ├── RootStackNavigator.tsx
-│   │   └── MainTabNavigator.tsx
-│   ├── screens/
-│   │   ├── LoginScreen.tsx
-│   │   ├── RegisterScreen.tsx
-│   │   ├── LearnScreen.tsx         # Course list + stats
-│   │   ├── SearchScreen.tsx        # Full-text search
-│   │   ├── CourseDetailScreen.tsx  # Enroll + modules
-│   │   ├── ModuleDetailScreen.tsx  # Lessons list + quiz CTA
-│   │   ├── LessonDetailScreen.tsx  # Video / text / image + resume
-│   │   ├── QuizScreen.tsx          # MCQ with feedback
-│   │   ├── TasksScreen.tsx         # All lessons as checklist
-│   │   └── ProfileScreen.tsx       # Stats + certs + lang + logout
-│   ├── components/
-│   │   ├── ThemedText.tsx
-│   │   ├── CourseCard.tsx
-│   │   ├── ProgressBar.tsx
-│   │   ├── EmptyState.tsx
-│   │   ├── LoadingScreen.tsx
-│   │   └── ErrorBoundary.tsx
-│   ├── hooks/
-│   │   ├── useAuth.tsx
-│   │   ├── useTheme.ts
-│   │   ├── usePushNotifications.ts
-│   │   └── useOfflineSync.ts
-│   ├── i18n/index.ts        # English + Hindi translations
-│   ├── lib/
-│   │   ├── api.ts           # Typed HTTP client + auto token refresh
-│   │   └── queryClient.ts   # React Query config
-│   ├── constants/theme.ts   # Design tokens (worker-optimised)
-│   └── types/index.ts       # Shared TypeScript interfaces
-│
-├── admin/
-│   └── index.html           # Self-contained admin web panel (no build needed)
-│
-├── migrations/
-│   └── 0000_initial_schema.sql
-│
+├── client/                        # React Native / Expo mobile app (workers)
+│   ├── App.tsx
+│   └── src/
+│       ├── screens/                # Login, Register, Forgot/Reset/Change-Password,
+│       │                           # Learn (home), CourseDetail, ModuleDetail,
+│       │                           # LessonDetail, Quiz, Search, Tasks, Profile
+│       ├── components/             # ThemedText, ProgressBar, CourseCard...
+│       ├── hooks/                  # useAuth, useTheme, useOfflineSync, usePushNotifications
+│       ├── navigation/             # RootStackNavigator, MainTabNavigator
+│       ├── lib/                    # api.ts — typed API client, token refresh
+│       ├── i18n/                   # Bilingual EN/HI translation strings
+│       └── types/                  # Shared client-side types
+├── server/                         # Express API
+│   ├── index.ts                    # Entry point, security middleware, static uploads
+│   ├── routes.ts                   # Router wiring, rate limiting
+│   ├── db.ts                       # Postgres connection (Neon/any managed provider)
+│   ├── routes/                     # auth, courses, progress, quiz, certificates, admin, upload
+│   ├── services/                   # certificate (PDF), email (SMTP), upload (Cloudinary/S3/local),
+│   │                                # notification (push), progress (completion + cert logic)
+│   ├── middleware/auth.ts
+│   └── utils/params.ts
+├── shared/schema.ts                # Drizzle schema + Zod validation — one source of truth,
+│                                    # imported by both client and server
+├── admin/index.html                # Admin dashboard — single file, no build step
+├── migrations/                     # Drizzle migration history (+ meta/ journal for db:migrate)
 ├── scripts/
-│   ├── seed.ts              # Sample data (courses, quizzes, users)
-│   └── create-admin.ts      # CLI admin user creation
-│
-├── nginx/
-│   └── fastsewa.conf        # Production Nginx config
-│
-├── Dockerfile               # Multi-stage production build
-├── docker-compose.yml       # postgres + redis + api
-├── .env.example             # All env vars documented
-├── eas.json                 # Expo EAS build profiles
-├── DEPLOYMENT.md            # Step-by-step deploy guide
-└── tsconfig.json
+│   ├── seed.ts                     # Sample users, courses, quizzes
+│   └── create-admin.ts
+├── docker-compose.yml              # api + redis (local-db is an opt-in profile)
+├── Dockerfile
+├── .github/workflows/              # CI: typecheck → lint → build
+├── DEPLOYMENT.md
+└── .env.example
 ```
 
 ---
 
-## 🚀 Quick Start (Local Dev)
+## 🛠️ Technologies Used
+
+### Mobile Client
+| Technology | Usage |
+|---|---|
+| **React Native + Expo (SDK 54)** | Cross-platform iOS/Android app |
+| **TypeScript** | End-to-end type safety, shared types with the server |
+| **React Navigation** | Stack + tab navigation |
+| **TanStack Query** | Server-state caching for authenticated screens |
+| **i18next** | Hindi/English translations |
+| **AsyncStorage + NetInfo** | Offline course caching |
+| **Expo Notifications** | Push notifications |
+
+### Backend
+| Technology | Usage |
+|---|---|
+| **Node.js + Express** | REST API |
+| **PostgreSQL** | Primary database — any managed provider (Neon recommended, free tier) |
+| **Drizzle ORM** | Schema, migrations, typed queries |
+| **JWT (access + refresh)** | Auth, with refresh-token rotation and session invalidation on password change |
+| **bcrypt** | Password hashing |
+| **Zod** | Request validation, shared schema with the client |
+| **Redis** *(optional)* | Shared rate-limit store across instances — the app runs fine without it, using an in-memory limiter instead |
+| **Nodemailer (SMTP)** | Password-reset emails — works with any provider (Resend, Brevo, SES...); without it, reset codes log to the server console instead |
+| **Cloudinary / AWS S3** | Video & image storage — falls back to local disk for dev, with a startup warning since local storage isn't durable across redeploys |
+
+### Admin Dashboard
+| Technology | Usage |
+|---|---|
+| **Plain HTML/CSS/JS** | No build step, no framework — one file |
+
+### CI/CD
+- GitHub Actions: type-check (`tsc --noEmit`) → lint (`eslint --max-warnings 0`) → Docker build, in that order
+- Render (recommended) or Docker Compose for self-hosted/VPS deploys
+
+---
+
+## ⚙️ Getting Started
 
 ### Prerequisites
 - Node.js 20+
-- PostgreSQL 14+ running locally
-- (Optional) Docker for one-command stack
+- A Postgres database — a free [Neon](https://neon.tech) project takes about 2 minutes
+- Expo CLI / EAS CLI (`npm install -g eas-cli`) for building the mobile app
 
-### 1. Install & Configure
+### Local Development
 
 ```bash
-git clone https://github.com/yourname/fastsewa-training.git
+# 1. Clone and install
+git clone <your-repo-url> fastsewa-training
 cd fastsewa-training
 npm install
+
+# 2. Environment
 cp .env.example .env
-```
+# fill in: DATABASE_URL (your Neon connection string), JWT_SECRET (any long
+# random string). Everything else — SMTP, Cloudinary/S3, Redis — is optional
+# for local dev and degrades gracefully if left unset.
 
-Edit `.env` — at minimum set:
-```env
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/fastsewa_db
-JWT_SECRET=any-long-random-string-here-at-least-32-chars
-```
+# 3. Schema + sample data
+npm run db:push
+npm run seed          # sample users/courses, or skip and author real content instead
 
-### 2. Create DB + Push Schema
-
-```bash
-createdb fastsewa_db       # or use pgAdmin/TablePlus
-npm run db:push            # Drizzle creates all 11 tables
-```
-
-### 3. Seed Sample Data
-
-```bash
-npm run seed
-```
-
-Creates:
-- **Admin:** `admin` / `Admin@1234`
-- **Worker:** `ramesh` / `Worker@123` (Hindi, phone set)
-- 3 published courses (Safety, Tools, Electrical) with modules, lessons, quizzes
-
-### 4. Start Development
-
-```bash
+# 4. Run the server
 npm run dev
+# -> http://localhost:5000/api/health
+
+# 5. Run the mobile app (separate terminal)
+npx expo start
+# -> scan the QR code with Expo Go, or press i / a for a simulator
+
+# 6. Admin dashboard
+# open admin/index.html in a browser — for local dev it points at
+# localhost:5000 by default; see the file's top for the config line
 ```
 
-- API: `http://localhost:5000`
-- Expo: `http://localhost:8081` (scan QR with Expo Go)
-- Admin panel: open `admin/index.html` in browser (set API URL to `http://localhost:5000`)
-
----
-
-## 🐳 Docker (Full Stack)
-
+Create your first admin login:
 ```bash
-cp .env.example .env
-# Set: DB_PASSWORD, JWT_SECRET, ALLOWED_ORIGINS
-
-docker compose up -d
-
-# First time only:
-docker compose exec api npm run db:push
-docker compose exec api npm run seed
-
-# Check health
-curl http://localhost:5000/api/health
+npx tsx scripts/create-admin.ts you@example.com "SomeStrongPassword123"
 ```
 
 ---
 
-## 📱 Mobile App Build
+## ✍️ Adding Content
 
-```bash
-npm install -g eas-cli
-eas login
-eas build:configure
+All course content is authored from the **admin dashboard** by an admin or trainer account:
 
-# Android APK (for direct WhatsApp/QR distribution to workers)
-eas build --platform android --profile preview
-
-# Production build for Play Store
-eas build --platform android --profile production
-eas submit --platform android
-```
-
-Update `EXPO_PUBLIC_API_URL` in `eas.json` to point to your deployed API.
+1. **Course** — title + description in both English and Hindi, category, difficulty
+2. **Modules** — added inside a course, also bilingual
+3. **Lessons** — added inside a module:
+   - Video: paste a YouTube URL (simplest, free, reliable) or upload a file
+   - Text or image content
+   - Every lesson has English and Hindi fields
+4. **Quiz** *(recommended per module)* — multiple-choice questions, 4 options each, bilingual, with a passing score. **If a module has a quiz, workers must pass it — watching the lessons alone won't mark the module complete.** Modules with no quiz complete on lesson-viewing alone.
+5. **Publish** — a course is invisible to workers until this toggle is switched on
 
 ---
 
-## 🌐 Admin Panel
+## 🚢 Deployment
 
-Open `admin/index.html` directly in your browser. No build step needed.
+Full step-by-step instructions — including the Neon database setup, environment variables, and three deployment paths (Render, Docker Compose, self-hosted) — are in **[`DEPLOYMENT.md`](./DEPLOYMENT.md)**.
 
-Set the API URL in the login page or by editing the `FASTSEWA_API_URL` variable at the top of the file.
-
-**Capabilities:**
-- 📊 Dashboard (workers, courses, enrollments, completion rate)
-- 📚 Courses CRUD (create, edit, publish/unpublish, delete)
-- 🎬 Content Builder (add modules + lessons with video/text/image)
-- 👷 Worker management (list, progress drill-down, certificates)
+Before onboarding real workers:
+- [ ] `CLOUDINARY_CLOUD_NAME` / `AWS_S3_BUCKET` configured (uploaded videos won't survive a redeploy otherwise)
+- [ ] `SMTP_*` configured, so forgot-password actually emails a code
+- [ ] `eas init` run and a real EAS project ID set in `app.json`, for push notifications to work
 
 ---
 
-## 🔐 API Reference
+## 👨‍💻 Developer Squad
 
-All endpoints require `Authorization: Bearer <accessToken>` except `/auth/login` and `/auth/register`.
-
-### Auth
-| Method | Endpoint | Description |
-|--------|---------|-------------|
-| POST | `/api/v1/auth/register` | Create worker account |
-| POST | `/api/v1/auth/login` | Login, returns tokens |
-| POST | `/api/v1/auth/refresh` | Rotate refresh token |
-| POST | `/api/v1/auth/logout` | Invalidate refresh token |
-| GET | `/api/v1/auth/me` | Current user |
-| PATCH | `/api/v1/auth/me` | Update profile / language |
-
-### Courses
-| Method | Endpoint | Description |
-|--------|---------|-------------|
-| GET | `/api/v1/courses` | List published courses (+ ?category=) |
-| GET | `/api/v1/courses/:id` | Course detail + modules + lessons |
-| GET | `/api/v1/courses/module/:id` | Module detail + lessons |
-| GET | `/api/v1/courses/lesson/:id` | Single lesson (full content) |
-| POST | `/api/v1/courses/:id/enroll` | Enroll in course |
-
-### Progress
-| Method | Endpoint | Description |
-|--------|---------|-------------|
-| POST | `/api/v1/progress/lesson` | Save lesson progress + video resume point |
-| GET | `/api/v1/progress/lesson/:id` | Get resume point for lesson |
-| GET | `/api/v1/progress/all-lessons` | All lesson progress (for Tasks screen) |
-| GET | `/api/v1/progress/stats` | Overall worker stats |
-
-### Quiz
-| Method | Endpoint | Description |
-|--------|---------|-------------|
-| GET | `/api/v1/quiz/module/:moduleId` | Get quiz questions (no answers) |
-| POST | `/api/v1/quiz/:quizId/submit` | Submit answers, get score + feedback |
-| GET | `/api/v1/quiz/:quizId/attempts` | Attempt history |
-
-### Certificates
-| Method | Endpoint | Description |
-|--------|---------|-------------|
-| GET | `/api/v1/certificates` | My certificates |
-| GET | `/api/v1/certificates/:id/pdf` | Download PDF |
-
-### Admin (requires admin/trainer role)
-| Method | Endpoint | Description |
-|--------|---------|-------------|
-| GET | `/api/v1/admin/dashboard` | Stats overview |
-| GET/POST | `/api/v1/admin/courses` | List / create courses |
-| PUT | `/api/v1/admin/courses/:id` | Update course |
-| PATCH | `/api/v1/admin/courses/:id/publish` | Toggle publish |
-| DELETE | `/api/v1/admin/courses/:id` | Delete course |
-| POST | `/api/v1/admin/courses/:id/modules` | Add module |
-| POST | `/api/v1/admin/modules/:id/lessons` | Add lesson |
-| GET | `/api/v1/admin/workers` | List workers |
-| GET | `/api/v1/admin/workers/:id/progress` | Worker progress + certs |
-
-### Upload (admin/trainer only)
-| Method | Endpoint | Description |
-|--------|---------|-------------|
-| POST | `/api/v1/upload/image` | Upload image (returns URL) |
-| POST | `/api/v1/upload/video` | Upload video (returns URL) |
+**
 
 ---
 
-## 🔑 Environment Variables
+## 🏢 About the Company
 
-See `.env.example` for the full list. Required minimum:
+**Jha Ji Fastsewa E-Facilities Private Limited**
+- 📍 B Hub, Gandhi Maidan, Patna, Bihar — 800001
+- 📞 +91 82757 23755
+- 📧 fastsewa2020@gmail.com
+- 🌐 [fastsewa.com](https://fastsewa.com)
 
-```env
-DATABASE_URL=postgresql://...
-JWT_SECRET=<32+ random chars>
-NODE_ENV=production
-```
-
----
-
-## 🏗️ Database Schema (11 tables)
-
-```
-users ──────────────────────────────────────────────────┐
-  └─ course_enrollments ←── courses ──┐                 │
-  └─ lesson_progress   ←── lessons ←─┤                  │
-  └─ module_progress   ←── modules ←─┤ courses          │
-  └─ quiz_attempts     ←── quizzes ←─┤                  │
-  └─ certificates      ←─────────────┘                  │
-  └─ refresh_tokens                                      │
-                         quiz_questions ←── quizzes ────┘
-```
+[![Facebook](https://img.shields.io/badge/Facebook-1877F2?style=flat&logo=facebook&logoColor=white)](https://facebook.com/fastsewa.20)
+[![Instagram](https://img.shields.io/badge/Instagram-E4405F?style=flat&logo=instagram&logoColor=white)](https://www.instagram.com/fastsewa2020/)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-0077B5?style=flat&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/fastsewa-facilities-2a062b2a2/)
+[![WhatsApp](https://img.shields.io/badge/WhatsApp-25D366?style=flat&logo=whatsapp&logoColor=white)](https://wa.me/918275723755)
 
 ---
 
-## 🛡️ Security
+## 📄 License
 
-- Passwords hashed with **bcrypt (cost 12)**
-- **JWT** with 15-minute access tokens + 30-day refresh tokens (rotated on use)
-- **Timing-safe** login (prevents username enumeration)
-- **Rate limiting**: 200 req/15min global, 15 req/15min on auth
-- **Helmet.js** security headers
-- **Strict CORS** — allowlist from environment variable only
-- **Zod validation** on every API route
-- All SQL via **parameterised queries** (Drizzle ORM — no raw SQL injection risk)
+This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
 
 ---
 
-## 🚀 Deployment
-
-See [`DEPLOYMENT.md`](./DEPLOYMENT.md) for full step-by-step guides for:
-- Local development
-- Docker Compose (staging / VPS)
-- **Render.com** (recommended for MVP — free tier)
-- **DigitalOcean** droplet with Nginx + SSL
-- **Expo EAS** mobile builds
-
----
-
-## 📦 Tech Stack
-
-| Layer | Tech |
-|-------|------|
-| Mobile | React Native 0.81, Expo 54 |
-| Navigation | React Navigation 7 |
-| State | TanStack Query v5 |
-| API | Express 5, TypeScript |
-| Database | PostgreSQL 16, Drizzle ORM |
-| Auth | JWT (jsonwebtoken), bcryptjs |
-| Validation | Zod |
-| i18n | i18next, react-i18next |
-| PDF | pdfkit |
-| Media | Cloudinary / AWS S3 |
-| Push | Expo Notifications |
-| DevOps | Docker, GitHub Actions |
-| Deploy | Render.com / DigitalOcean |
+**Last Updated**: September 2026

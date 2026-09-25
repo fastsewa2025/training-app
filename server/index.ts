@@ -1,12 +1,29 @@
 import "dotenv/config";
 import express from "express";
 import type { Request, Response, NextFunction } from "express";
+import { join } from "path";
 import { registerRoutes } from "./routes";
 
 const app = express();
 
+// Last-resort safety net: some optional dependencies (e.g. rate-limit-redis
+// kicks off Redis calls at construction time, before routes.ts's own
+// connection-state checks can prevent it) can reject a promise nothing is
+// positioned to catch if Redis is unreachable at that exact moment. An
+// unhandled rejection crashes the whole process by default — for this
+// specific, well-understood, genuinely-optional case, log it and keep
+// running rather than take the API down over a rate-limiting enhancement.
+process.on("unhandledRejection", (reason) => {
+  console.error("[UnhandledRejection] continuing without crashing:", reason);
+});
+
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: false }));
+
+// Serves whatever uploadLocal() (server/services/upload.ts) writes to disk
+// when running without Cloudinary/S3 configured. Same path computation as
+// that function (process.cwd()/public/uploads) so the two always agree.
+app.use("/uploads", express.static(join(process.cwd(), "public", "uploads")));
 
 // Strict CORS from env allowlist
 app.use((req: Request, res: Response, next: NextFunction) => {
@@ -14,7 +31,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
     process.env.ALLOWED_ORIGINS || "http://localhost:5000"
   )
     .split(",")
-    .map((o) => o.trim());
+    .map((o: string) => o.trim());
 
   const origin = req.header("origin");
   if (origin && allowedOrigins.includes(origin)) {

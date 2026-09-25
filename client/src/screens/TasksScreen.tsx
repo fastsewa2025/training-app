@@ -129,7 +129,7 @@ export default function TasksScreen() {
   const getTitle = (en: string, hi?: string) =>
     i18n.language === "hi" && hi ? hi : en;
 
-  const FILTERS: Array<{ key: "all" | "todo" | "done"; label: string; count: number }> = [
+  const FILTERS: { key: "all" | "todo" | "done"; label: string; count: number }[] = [
     { key: "all", label: "All", count: tasks.length },
     { key: "todo", label: "To Do", count: todoCnt },
     { key: "done", label: "Done", count: doneCnt },

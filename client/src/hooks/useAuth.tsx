@@ -1,16 +1,9 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
-import { apiClient, storeTokens, clearTokens, ApiError } from "@/lib/api";
+import { apiClient, storeTokens, clearTokens } from "@/lib/api";
 import i18n from "@/i18n";
+import type { AuthUser } from "@/types";
 
-export interface AuthUser {
-  id: string;
-  username: string;
-  displayName: string;
-  role: "admin" | "trainer" | "worker";
-  preferredLang: "en" | "hi";
-  avatarUrl?: string;
-  phoneNumber?: string;
-}
+export type { AuthUser };
 
 interface AuthContextValue {
   user: AuthUser | null;
@@ -18,13 +11,17 @@ interface AuthContextValue {
   login: (username: string, password: string) => Promise<void>;
   register: (data: RegisterData) => Promise<void>;
   logout: () => Promise<void>;
-  updateProfile: (data: Partial<Pick<AuthUser, "displayName" | "preferredLang" | "phoneNumber">>) => Promise<void>;
+  updateProfile: (data: Partial<Pick<AuthUser, "displayName" | "preferredLang" | "phoneNumber" | "email">>) => Promise<void>;
+  forgotPassword: (email: string) => Promise<void>;
+  resetPassword: (email: string, code: string, newPassword: string) => Promise<void>;
+  changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
 }
 
 interface RegisterData {
   username: string;
   password: string;
   displayName: string;
+  email?: string;
   phoneNumber?: string;
   preferredLang?: "en" | "hi";
 }
@@ -80,7 +77,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const updateProfile = useCallback(
-    async (data: Partial<Pick<AuthUser, "displayName" | "preferredLang" | "phoneNumber">>) => {
+    async (data: Partial<Pick<AuthUser, "displayName" | "preferredLang" | "phoneNumber" | "email">>) => {
       const updated = await apiClient.patch<AuthUser>("/api/v1/auth/me", data);
       setUser((prev) => prev ? { ...prev, ...updated } : prev);
       if (data.preferredLang) i18n.changeLanguage(data.preferredLang);
@@ -88,8 +85,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
+  // Pre-auth: no `user` state to touch either way. The screen decides what
+  // to show; this just makes the call and lets errors propagate to it.
+  const forgotPassword = useCallback(async (email: string) => {
+    await apiClient.post("/api/v1/auth/forgot-password", { email });
+  }, []);
+
+  const resetPassword = useCallback(
+    async (email: string, code: string, newPassword: string) => {
+      await apiClient.post("/api/v1/auth/reset-password", { email, code, newPassword });
+    },
+    []
+  );
+
+  // Server signs out every session (this one included) on success, so the
+  // caller should follow up with logout() once this resolves.
+  const changePassword = useCallback(async (currentPassword: string, newPassword: string) => {
+    await apiClient.post("/api/v1/auth/change-password", { currentPassword, newPassword });
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, register, logout, updateProfile }}>
+    <AuthContext.Provider
+      value={{ user, isLoading, login, register, logout, updateProfile, forgotPassword, resetPassword, changePassword }}
+    >
       {children}
     </AuthContext.Provider>
   );

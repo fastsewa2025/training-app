@@ -10,6 +10,8 @@ import {
 import { eq, and, asc } from "drizzle-orm";
 import { requireAuth, requireRole, AuthRequest } from "../middleware/auth";
 import { z } from "zod";
+import { evaluateModuleCompletion } from "../services/progress";
+import { paramStr } from "../utils/params";
 
 export const quizRouter = Router();
 quizRouter.use(requireAuth);
@@ -19,7 +21,7 @@ quizRouter.get("/module/:moduleId", async (req: AuthRequest, res: Response) => {
   const [quiz] = await db
     .select()
     .from(quizzes)
-    .where(eq(quizzes.moduleId, req.params.moduleId))
+    .where(eq(quizzes.moduleId, paramStr(req.params.moduleId)))
     .limit(1);
 
   if (!quiz) return res.status(404).json({ error: "No quiz found for this module" });
@@ -56,7 +58,7 @@ quizRouter.post("/:quizId/submit", async (req: AuthRequest, res: Response) => {
   const [quiz] = await db
     .select()
     .from(quizzes)
-    .where(eq(quizzes.id, req.params.quizId))
+    .where(eq(quizzes.id, paramStr(req.params.quizId)))
     .limit(1);
 
   if (!quiz) return res.status(404).json({ error: "Quiz not found" });
@@ -112,16 +114,19 @@ quizRouter.post("/:quizId/submit", async (req: AuthRequest, res: Response) => {
       moduleId: quiz.moduleId,
       quizScore: score,
       quizPassed: passed,
-      completedAt: passed ? new Date() : undefined,
     })
     .onConflictDoUpdate({
       target: [moduleProgress.userId, moduleProgress.moduleId],
       set: {
         quizScore: score,
         quizPassed: passed,
-        completedAt: passed ? new Date() : undefined,
       },
     });
+
+  // Module/course completion (and cert issuance) requires lessons done AND
+  // quiz passed — evaluated centrally so this can't fall out of sync with
+  // the lesson-completion path in progress.ts.
+  await evaluateModuleCompletion(req.user!.id, quiz.moduleId);
 
   res.json({ score, passed, passingScore: quiz.passingScore, feedback, attempt });
 });
@@ -139,7 +144,7 @@ quizRouter.get("/:quizId/attempts", async (req: AuthRequest, res: Response) => {
     .where(
       and(
         eq(quizAttempts.userId, req.user!.id),
-        eq(quizAttempts.quizId, req.params.quizId)
+        eq(quizAttempts.quizId, paramStr(req.params.quizId))
       )
     );
 
@@ -158,7 +163,7 @@ quizRouter.post(
 
     const [quiz] = await db
       .insert(quizzes)
-      .values({ moduleId: req.params.moduleId, title, passingScore: passingScore ?? 70 })
+      .values({ moduleId: paramStr(req.params.moduleId), title, passingScore: passingScore ?? 70 })
       .returning();
 
     if (questions.length > 0) {

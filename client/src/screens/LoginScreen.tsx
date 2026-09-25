@@ -20,8 +20,10 @@ import { ApiError } from "@/lib/api";
 
 export default function LoginScreen({
   onNavigateRegister,
+  onForgotPassword,
 }: {
   onNavigateRegister: () => void;
+  onForgotPassword: () => void;
 }) {
   const { t } = useTranslation();
   const { login } = useAuth();
@@ -104,6 +106,12 @@ export default function LoginScreen({
               ) : (
                 <ThemedText style={styles.btnText}>{t("loginBtn")}</ThemedText>
               )}
+            </Pressable>
+
+            <Pressable onPress={onForgotPassword} style={styles.switchLink}>
+              <ThemedText style={[styles.switchText, { color: theme.textSecondary }]}>
+                {t("forgotPassword")}
+              </ThemedText>
             </Pressable>
 
             <Pressable onPress={onNavigateRegister} style={styles.switchLink}>

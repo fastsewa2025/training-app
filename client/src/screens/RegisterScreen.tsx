@@ -20,6 +20,7 @@ export default function RegisterScreen({ onNavigateLogin }: { onNavigateLogin: (
   const [displayName, setDisplayName] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [lang, setLang] = useState<"en" | "hi">("en");
   const [loading, setLoading] = useState(false);
@@ -39,6 +40,7 @@ export default function RegisterScreen({ onNavigateLogin }: { onNavigateLogin: (
         displayName: displayName.trim(),
         username: username.trim().toLowerCase(),
         password,
+        email: email.trim() || undefined,
         phoneNumber: phone.trim() || undefined,
         preferredLang: lang,
       });
@@ -61,6 +63,7 @@ export default function RegisterScreen({ onNavigateLogin }: { onNavigateLogin: (
               { label: t("displayName"), value: displayName, set: setDisplayName, placeholder: "e.g. Ramesh Kumar", secure: false, caps: "words" as const },
               { label: t("username"), value: username, set: setUsername, placeholder: "e.g. ramesh123", secure: false, caps: "none" as const },
               { label: t("password"), value: password, set: setPassword, placeholder: "Min 8 characters", secure: true, caps: "none" as const },
+              { label: t("email") + " (optional)", value: email, set: setEmail, placeholder: "you@example.com", secure: false, caps: "none" as const },
               { label: t("phone"), value: phone, set: setPhone, placeholder: "+91 9876543210", secure: false, caps: "none" as const },
             ].map(({ label, value, set, placeholder, secure, caps }) => (
               <View key={label} style={styles.field}>
@@ -74,7 +77,7 @@ export default function RegisterScreen({ onNavigateLogin }: { onNavigateLogin: (
                   secureTextEntry={secure}
                   autoCapitalize={caps}
                   autoCorrect={false}
-                  keyboardType={label === t("phone") ? "phone-pad" : "default"}
+                  keyboardType={label === t("phone") ? "phone-pad" : label.startsWith(t("email")) ? "email-address" : "default"}
                 />
               </View>
             ))}

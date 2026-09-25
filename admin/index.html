@@ -794,7 +794,7 @@ function LessonModal({moduleId,lesson,onClose,onSaved}){
       const res=await api.upload("/api/v1/upload/video",fd);
       setUploadPct(100);
       setVideoFile({file,url:res.url});
-      setForm(f=>({...f,videoUrl:res.url,videoProvider:"cloudinary"}));
+      setForm(f=>({...f,videoUrl:res.url,videoProvider:res.provider}));
     }catch(e){setErr("Video upload failed: "+e.message);setVideoFile(null)}
     finally{setUploading(false)};
   };

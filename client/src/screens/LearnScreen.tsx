@@ -14,6 +14,7 @@ import { ThemedText } from "@/components/ThemedText";
 import { CourseCard } from "@/components/CourseCard";
 import { useTheme } from "@/hooks/useTheme";
 import { useAuth } from "@/hooks/useAuth";
+import { useOfflineSync } from "@/hooks/useOfflineSync";
 import { apiClient } from "@/lib/api";
 import { Colors, Spacing, BorderRadius, Typography } from "@/constants/theme";
 import { RootStackParamList } from "@/navigation/RootStackNavigator";
@@ -54,16 +55,23 @@ export default function LearnScreen() {
 
   const [activeCategory, setActiveCategory] = useState<string>("all");
 
-  const { data: courses = [], isLoading, refetch, isRefetching } = useQuery<CourseItem[]>({
-    queryKey: ["courses", activeCategory],
-    queryFn: () =>
+  const {
+    data: coursesRaw,
+    loading: isLoading,
+    isOffline,
+    isStale,
+    refetch,
+  } = useOfflineSync<CourseItem[]>(
+    `courses_${activeCategory}`,
+    () =>
       apiClient.get<CourseItem[]>(
         activeCategory === "all"
           ? "/api/v1/courses"
           : `/api/v1/courses?category=${activeCategory}`
       ),
-    staleTime: 2 * 60 * 1000,
-  });
+    [activeCategory]
+  );
+  const courses = coursesRaw ?? [];
 
   const { data: stats } = useQuery<{
     coursesEnrolled: number;
@@ -82,7 +90,7 @@ export default function LearnScreen() {
       <FlatList
         data={courses}
         keyExtractor={(c) => c.id}
-        refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={refetch} />}
+        refreshControl={<RefreshControl refreshing={isLoading} onRefresh={refetch} />}
         ListHeaderComponent={
           <>
             {/* Greeting */}
@@ -91,6 +99,15 @@ export default function LearnScreen() {
                 {t("hello", { name: user?.displayName?.split(" ")[0] || "Worker" })}
               </ThemedText>
             </View>
+
+            {(isOffline || isStale) && (
+              <View style={[styles.offlineBanner, { backgroundColor: theme.backgroundDefault, borderColor: theme.border }]}>
+                <Feather name="wifi-off" size={16} color={theme.textSecondary} />
+                <ThemedText type="small" style={{ color: theme.textSecondary, flex: 1 }}>
+                  {t("offlineShowingSaved")}
+                </ThemedText>
+              </View>
+            )}
 
             {/* Stats row */}
             {stats && (
@@ -168,6 +185,14 @@ export default function LearnScreen() {
               color={Colors.light.primary}
               style={{ marginTop: 60 }}
             />
+          ) : isOffline ? (
+            <View style={styles.empty}>
+              <ThemedText style={{ fontSize: 48 }}>📡</ThemedText>
+              <ThemedText type="h4">{t("networkError")}</ThemedText>
+              <ThemedText style={{ color: theme.textSecondary, textAlign: "center" }}>
+                {t("noCachedCourses")}
+              </ThemedText>
+            </View>
           ) : (
             <View style={styles.empty}>
               <ThemedText style={{ fontSize: 48 }}>📚</ThemedText>
@@ -188,6 +213,16 @@ const styles = StyleSheet.create({
   safe: { flex: 1 },
   header: { paddingHorizontal: Spacing.lg, paddingTop: Spacing.lg, paddingBottom: Spacing.md },
   statsRow: { flexDirection: "row", paddingHorizontal: Spacing.lg, gap: Spacing.sm, marginBottom: Spacing.lg },
+  offlineBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.sm,
+    marginHorizontal: Spacing.lg,
+    marginBottom: Spacing.md,
+    padding: Spacing.md,
+    borderRadius: BorderRadius.sm,
+    borderWidth: 1,
+  },
   statBox: {
     flex: 1, borderRadius: BorderRadius.md, padding: Spacing.md,
     alignItems: "center", gap: 4,

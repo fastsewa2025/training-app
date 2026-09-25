@@ -8,12 +8,12 @@ import {
   modules,
   courses,
   certificates,
-  quizAttempts,
 } from "@shared/schema";
 import { eq, and, count, sql, asc } from "drizzle-orm";
 import { requireAuth, AuthRequest } from "../middleware/auth";
 import { z } from "zod";
-import { generateCertificateNumber } from "../services/certificate";
+import { paramStr } from "../utils/params";
+import { evaluateModuleCompletion } from "../services/progress";
 
 export const progressRouter = Router();
 progressRouter.use(requireAuth);
@@ -66,7 +66,7 @@ progressRouter.get("/lesson/:lessonId", async (req: AuthRequest, res: Response) 
     .where(
       and(
         eq(lessonProgress.userId, req.user!.id),
-        eq(lessonProgress.lessonId, req.params.lessonId)
+        eq(lessonProgress.lessonId, paramStr(req.params.lessonId))
       )
     )
     .limit(1);
@@ -99,7 +99,7 @@ progressRouter.get("/course/:courseId", async (req: AuthRequest, res: Response) 
     .where(
       and(
         eq(courseEnrollments.userId, userId),
-        eq(courseEnrollments.courseId, req.params.courseId)
+        eq(courseEnrollments.courseId, paramStr(req.params.courseId))
       )
     )
     .limit(1);
@@ -202,6 +202,10 @@ progressRouter.get("/stats", async (req: AuthRequest, res: Response) => {
 });
 
 // ─── Internal helper ──────────────────────────────────────────────────────────
+// Resolves lessonId -> moduleId, then defers to the shared evaluator in
+// services/progress.ts, which is also called from quiz.ts on quiz submit.
+// That's the single source of truth for module/course completion + cert
+// issuance — don't reimplement the check here.
 async function checkAndUpdateModuleProgress(userId: string, lessonId: string) {
   const [lesson] = await db
     .select({ moduleId: lessons.moduleId })
@@ -210,115 +214,5 @@ async function checkAndUpdateModuleProgress(userId: string, lessonId: string) {
     .limit(1);
   if (!lesson) return;
 
-  const allLessons = await db
-    .select({ id: lessons.id, isRequired: lessons.isRequired })
-    .from(lessons)
-    .where(eq(lessons.moduleId, lesson.moduleId));
-
-  const requiredIds = allLessons.filter((l) => l.isRequired).map((l) => l.id);
-  if (requiredIds.length === 0) return;
-
-  const done = await db
-    .select({ lessonId: lessonProgress.lessonId })
-    .from(lessonProgress)
-    .where(
-      and(
-        eq(lessonProgress.userId, userId),
-        eq(lessonProgress.completed, true)
-      )
-    );
-
-  const doneSet = new Set(done.map((d) => d.lessonId));
-  const allDone = requiredIds.every((id) => doneSet.has(id));
-
-  if (allDone) {
-    const existing = await db
-      .select({ completedAt: moduleProgress.completedAt })
-      .from(moduleProgress)
-      .where(
-        and(
-          eq(moduleProgress.userId, userId),
-          eq(moduleProgress.moduleId, lesson.moduleId)
-        )
-      )
-      .limit(1);
-
-    // Only set completedAt once
-    if (!existing[0]?.completedAt) {
-      await db
-        .insert(moduleProgress)
-        .values({ userId, moduleId: lesson.moduleId, completedAt: new Date() })
-        .onConflictDoUpdate({
-          target: [moduleProgress.userId, moduleProgress.moduleId],
-          set: { completedAt: new Date() },
-        });
-    }
-
-    // Update course completion percent
-    await updateCourseCompletionPercent(userId, lesson.moduleId);
-  }
-}
-
-async function updateCourseCompletionPercent(userId: string, moduleId: string) {
-  const [mod] = await db
-    .select({ courseId: modules.courseId })
-    .from(modules)
-    .where(eq(modules.id, moduleId))
-    .limit(1);
-  if (!mod) return;
-
-  const allMods = await db
-    .select({ id: modules.id })
-    .from(modules)
-    .where(eq(modules.courseId, mod.courseId));
-
-  const completedMods = await db
-    .select({ moduleId: moduleProgress.moduleId })
-    .from(moduleProgress)
-    .where(
-      and(
-        eq(moduleProgress.userId, userId),
-        sql`completed_at IS NOT NULL`
-      )
-    );
-
-  const completedSet = new Set(completedMods.map((m) => m.moduleId));
-  const pct = allMods.length > 0
-    ? Math.round((allMods.filter((m) => completedSet.has(m.id)).length / allMods.length) * 100)
-    : 0;
-
-  await db
-    .update(courseEnrollments)
-    .set({
-      completionPercent: pct,
-      completedAt: pct === 100 ? new Date() : undefined,
-    })
-    .where(
-      and(
-        eq(courseEnrollments.userId, userId),
-        eq(courseEnrollments.courseId, mod.courseId)
-      )
-    );
-
-  // Issue certificate on 100%
-  if (pct === 100) {
-    const [existingCert] = await db
-      .select({ id: certificates.id })
-      .from(certificates)
-      .where(
-        and(
-          eq(certificates.userId, userId),
-          eq(certificates.courseId, mod.courseId)
-        )
-      )
-      .limit(1);
-
-    if (!existingCert) {
-      await db.insert(certificates).values({
-        userId,
-        courseId: mod.courseId,
-        certificateNumber: generateCertificateNumber(),
-      });
-    }
-  }
+  await evaluateModuleCompletion(userId, lesson.moduleId);
 }

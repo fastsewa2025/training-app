@@ -1,4 +1,6 @@
 import { Router, Response } from "express";
+import bcrypt from "bcryptjs";
+import { randomBytes } from "crypto";
 import { db } from "../db";
 import {
   users,
@@ -8,13 +10,14 @@ import {
   courseEnrollments,
   moduleProgress,
   certificates,
+  refreshTokens,
   createCourseSchema,
   createModuleSchema,
   createLessonSchema,
 } from "@shared/schema";
 import { eq, desc, count, sql, and } from "drizzle-orm";
 import { requireAuth, requireRole, AuthRequest } from "../middleware/auth";
-import { z } from "zod";
+import { paramStr } from "../utils/params";
 
 export const adminRouter = Router();
 // All admin routes require auth + admin/trainer role
@@ -67,6 +70,8 @@ adminRouter.get("/workers", async (_req: AuthRequest, res: Response) => {
 });
 
 adminRouter.get("/workers/:userId/progress", async (req: AuthRequest, res: Response) => {
+  const userId = paramStr(req.params.userId);
+
   const progress = await db
     .select({
       moduleId: moduleProgress.moduleId,
@@ -76,7 +81,7 @@ adminRouter.get("/workers/:userId/progress", async (req: AuthRequest, res: Respo
       quizPassed: moduleProgress.quizPassed,
     })
     .from(moduleProgress)
-    .where(eq(moduleProgress.userId, req.params.userId))
+    .where(eq(moduleProgress.userId, userId))
     .orderBy(desc(moduleProgress.startedAt));
 
   const certs = await db
@@ -87,7 +92,7 @@ adminRouter.get("/workers/:userId/progress", async (req: AuthRequest, res: Respo
       courseId: certificates.courseId,
     })
     .from(certificates)
-    .where(eq(certificates.userId, req.params.userId));
+    .where(eq(certificates.userId, userId));
 
   res.json({ moduleProgress: progress, certificates: certs });
 });
@@ -100,8 +105,36 @@ adminRouter.patch(
     await db
       .update(users)
       .set({ isActive: false, updatedAt: new Date() })
-      .where(and(eq(users.id, req.params.id), eq(users.role, "worker")));
+      .where(and(eq(users.id, paramStr(req.params.id)), eq(users.role, "worker")));
     res.json({ message: "Worker deactivated" });
+  }
+);
+
+// POST /api/v1/admin/workers/:id/reset-password
+// Zero-dependency fallback for when a worker can't use email self-service
+// (no email on file, or SMTP not set up yet) — generates a one-time
+// temporary password and returns it ONCE so the admin/trainer can relay it
+// in person or by whatever channel they already use with their workers.
+adminRouter.post(
+  "/workers/:id/reset-password",
+  requireRole("admin"),
+  async (req: AuthRequest, res: Response) => {
+    const userId = paramStr(req.params.id);
+    const tempPassword = randomBytes(6).toString("base64url"); // 8 chars, URL-safe
+    const passwordHash = await bcrypt.hash(tempPassword, 12);
+
+    const [worker] = await db
+      .update(users)
+      .set({ passwordHash, updatedAt: new Date() })
+      .where(and(eq(users.id, userId), eq(users.role, "worker")))
+      .returning({ id: users.id, username: users.username });
+
+    if (!worker) return res.status(404).json({ error: "Worker not found" });
+
+    // Sign out any existing sessions, same as the self-service reset path.
+    await db.delete(refreshTokens).where(eq(refreshTokens.userId, worker.id));
+
+    res.json({ username: worker.username, temporaryPassword: tempPassword });
   }
 );
 
@@ -141,7 +174,7 @@ adminRouter.put(
     const [updated] = await db
       .update(courses)
       .set({ ...result.data, updatedAt: new Date() })
-      .where(eq(courses.id, req.params.id))
+      .where(eq(courses.id, paramStr(req.params.id)))
       .returning();
 
     if (!updated) return res.status(404).json({ error: "Course not found" });
@@ -157,7 +190,7 @@ adminRouter.patch(
     const [course] = await db
       .update(courses)
       .set({ isPublished: Boolean(published), updatedAt: new Date() })
-      .where(eq(courses.id, req.params.id))
+      .where(eq(courses.id, paramStr(req.params.id)))
       .returning();
     res.json(course);
   }
@@ -167,7 +200,7 @@ adminRouter.delete(
   "/courses/:id",
   requireRole("admin"),
   async (req: AuthRequest, res: Response) => {
-    await db.delete(courses).where(eq(courses.id, req.params.id));
+    await db.delete(courses).where(eq(courses.id, paramStr(req.params.id)));
     res.json({ message: "Course deleted" });
   }
 );
@@ -183,7 +216,7 @@ adminRouter.post(
 
     const [mod] = await db
       .insert(modules)
-      .values({ ...result.data, courseId: req.params.courseId })
+      .values({ ...result.data, courseId: paramStr(req.params.courseId) })
       .returning();
     res.status(201).json(mod);
   }
@@ -200,7 +233,7 @@ adminRouter.put(
     const [updated] = await db
       .update(modules)
       .set(result.data)
-      .where(eq(modules.id, req.params.id))
+      .where(eq(modules.id, paramStr(req.params.id)))
       .returning();
     res.json(updated);
   }
@@ -210,7 +243,7 @@ adminRouter.delete(
   "/modules/:id",
   requireRole("admin"),
   async (req: AuthRequest, res: Response) => {
-    await db.delete(modules).where(eq(modules.id, req.params.id));
+    await db.delete(modules).where(eq(modules.id, paramStr(req.params.id)));
     res.json({ message: "Module deleted" });
   }
 );
@@ -226,7 +259,7 @@ adminRouter.post(
 
     const [lesson] = await db
       .insert(lessons)
-      .values({ ...result.data, moduleId: req.params.moduleId })
+      .values({ ...result.data, moduleId: paramStr(req.params.moduleId) })
       .returning();
     res.status(201).json(lesson);
   }
@@ -243,7 +276,7 @@ adminRouter.put(
     const [updated] = await db
       .update(lessons)
       .set(result.data)
-      .where(eq(lessons.id, req.params.id))
+      .where(eq(lessons.id, paramStr(req.params.id)))
       .returning();
     res.json(updated);
   }
@@ -253,7 +286,7 @@ adminRouter.delete(
   "/lessons/:id",
   requireRole("admin"),
   async (req: AuthRequest, res: Response) => {
-    await db.delete(lessons).where(eq(lessons.id, req.params.id));
+    await db.delete(lessons).where(eq(lessons.id, paramStr(req.params.id)));
     res.json({ message: "Lesson deleted" });
   }
 );
