@@ -1,14 +1,7 @@
 import { useColorScheme } from "react-native";
-import { Colors } from "@/constants/theme";
+import { Colors, type Palette } from "@/constants/theme";
 
-export function useTheme() {
-  const scheme = useColorScheme();
-  const isDark = scheme === "dark";
-  const base = isDark ? Colors.dark : Colors.light;
-  const theme = {
-    ...base,
-    // backgroundRoot = outermost SafeAreaView color
-    backgroundRoot: isDark ? Colors.dark.background : Colors.light.background,
-  };
-  return { theme, isDark };
+export function useTheme(): { theme: Palette; isDark: boolean } {
+  const isDark = useColorScheme() === "dark";
+  return { theme: isDark ? Colors.dark : Colors.light, isDark };
 }

@@ -1,75 +1,77 @@
 /**
- * Email Service — password-reset codes
+ * Transactional e-mail (password-reset codes) over plain SMTP via nodemailer,
+ * so any provider works (Resend, Brevo, SES, Mailgun, Gmail, ...).
  *
- * Uses plain SMTP via nodemailer, so it works with any provider: Resend,
- * Brevo, AWS SES, Mailgun, even Gmail — no vendor SDK, just SMTP_* env
- * vars. See .env.example / DEPLOYMENT.md for setup.
- *
- * If SMTP isn't configured (e.g. local dev before you've set it up), this
- * logs the code to the server console instead of throwing, so the reset
- * flow is still fully testable without a real mailbox.
+ * Reset codes are secrets: they are never written to the logs. If SMTP is not
+ * configured the API reports `passwordResetByEmail: false` in GET /config and
+ * the app tells workers to ask their trainer (admins can issue a temporary
+ * password); only in a local development run is the code printed to the
+ * console, clearly marked, so the flow can be tried without a mail server.
  */
-import nodemailer, { Transporter } from "nodemailer";
+import nodemailer, { type Transporter } from "nodemailer";
+import { config } from "../config";
+import { logger } from "../logger";
 
 let transporter: Transporter | null = null;
-let warnedOnce = false;
+
+/** Test hook: messages "sent" while NODE_ENV=test and no SMTP is configured. */
+export const testOutbox: { to: string; subject: string; text: string; code?: string }[] = [];
+
+export function isEmailConfigured(): boolean {
+  return !!config.smtp || config.isTest;
+}
 
 function getTransporter(): Transporter | null {
   if (transporter) return transporter;
-  const host = process.env.SMTP_HOST;
-  const port = process.env.SMTP_PORT;
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASSWORD;
-  if (!host || !port || !user || !pass) return null;
-
+  const smtp = config.smtp;
+  if (!smtp) return null;
   transporter = nodemailer.createTransport({
-    host,
-    port: Number(port),
-    secure: Number(port) === 465,
-    auth: { user, pass },
+    host: smtp.host,
+    port: smtp.port,
+    secure: smtp.port === 465,
+    // Without this, nodemailer silently falls back to plain text when STARTTLS is not offered (or is
+    // stripped on the way), sending the SMTP password and the reset code readable to anyone in between.
+    requireTLS: smtp.requireTls && smtp.port !== 465,
+    auth: { user: smtp.user, pass: smtp.password },
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 20_000,
   });
   return transporter;
 }
 
-export async function sendPasswordResetEmail(
-  toEmail: string,
-  code: string,
-  displayName: string
-): Promise<void> {
-  const t = getTransporter();
-  if (!t) {
-    if (!warnedOnce) {
-      console.warn(
-        "[Email] SMTP not configured (SMTP_HOST/PORT/USER/PASSWORD) — " +
-          "logging reset codes to console instead of sending email. See .env.example."
-      );
-      warnedOnce = true;
-    }
-    console.log(`[Email:DEV] Password reset code for ${toEmail}: ${code} (expires in 30 min)`);
+const escapeHtml = (s: string) =>
+  s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] as string);
+
+export async function sendPasswordResetEmail(toEmail: string, code: string, displayName: string): Promise<void> {
+  const subject = "FastSewa password reset code / पासवर्ड रीसेट कोड";
+  const text =
+    `Hi ${displayName},\n\n` +
+    `Your FastSewa password reset code is: ${code}\n` +
+    `Enter it in the app to choose a new password. It expires in 30 minutes.\n` +
+    `If you did not ask for this, ignore this email — your password has not changed.\n\n` +
+    `नमस्ते ${displayName},\n\n` +
+    `आपका FastSewa पासवर्ड रीसेट कोड: ${code}\n` +
+    `नया पासवर्ड बनाने के लिए इसे ऐप में डालें। यह 30 मिनट में समाप्त हो जाएगा।\n` +
+    `अगर आपने यह अनुरोध नहीं किया है, तो इस ईमेल को अनदेखा करें — आपका पासवर्ड नहीं बदला है।\n`;
+  const html =
+    `<p>Hi ${escapeHtml(displayName)},</p>` +
+    `<p>Your FastSewa password reset code is:</p>` +
+    `<p style="font-size:28px;font-weight:700;letter-spacing:4px">${escapeHtml(code)}</p>` +
+    `<p>Enter it in the app to choose a new password. It expires in 30 minutes. If you did not ask for this, ignore this email.</p>` +
+    `<hr/><p>नमस्ते ${escapeHtml(displayName)}, आपका पासवर्ड रीसेट कोड ऊपर दिया गया है। यह 30 मिनट में समाप्त हो जाएगा। अगर आपने यह अनुरोध नहीं किया है, तो इस ईमेल को अनदेखा करें।</p>`;
+
+  if (config.isTest && !config.smtp) {
+    testOutbox.push({ to: toEmail, subject, text, code });
     return;
   }
 
-  const from = process.env.SMTP_FROM || "FastSewa <no-reply@fastsewa.app>";
-  await t.sendMail({
-    from,
-    to: toEmail,
-    subject: "FastSewa password reset code",
-    text:
-      `Hi ${displayName},\n\n` +
-      `Your FastSewa password reset code is: ${code}\n\n` +
-      `Enter this in the app to set a new password. It expires in 30 minutes.\n\n` +
-      `If you didn't request this, you can safely ignore this email.`,
-    html:
-      `<p>Hi ${escapeHtml(displayName)},</p>` +
-      `<p>Your FastSewa password reset code is:</p>` +
-      `<p style="font-size:28px;font-weight:700;letter-spacing:4px">${escapeHtml(code)}</p>` +
-      `<p>Enter this in the app to set a new password. It expires in 30 minutes.</p>` +
-      `<p>If you didn't request this, you can safely ignore this email.</p>`,
-  });
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string)
-  );
+  const t = getTransporter();
+  if (!t) {
+    if (config.isDev) {
+      logger.warn({ to: toEmail }, `[DEV ONLY] SMTP is not configured. Password reset code: ${code}`);
+    }
+    return;
+  }
+  await t.sendMail({ from: config.smtp!.from, to: toEmail, subject, text, html });
 }

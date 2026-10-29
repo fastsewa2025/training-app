@@ -1,183 +1,267 @@
-import { Router, Response } from "express";
+import { Router } from "express";
+import { and, asc, count, countDistinct, eq, ilike, inArray, isNull, or, type SQL } from "drizzle-orm";
+import { courseEnrollments, courses, lessonProgress, lessons, modules, quizzes } from "@shared/schema";
 import { db } from "../db";
-import { courses, modules, lessons, courseEnrollments } from "@shared/schema";
-import { eq, and, asc } from "drizzle-orm";
-import { requireAuth, AuthRequest } from "../middleware/auth";
-import { paramStr } from "../utils/params";
+import { notFound } from "../errors";
+import { requireAuth } from "../middleware/auth";
+import type { Limiters } from "../middleware/rateLimit";
+import { getCourseAccess, getLessonContext, getModuleContext, isStaffRole, type Course } from "../services/access";
+import {
+  enrollInCourse,
+  evaluateModule,
+  getCourseModuleStates,
+  getModuleState,
+  toLessonProgressView,
+} from "../services/progress";
+import { getQuizStatus } from "../services/quiz";
+import { escapeLike, idParam } from "../utils/params";
+import { parse } from "../utils/validate";
+import { courseListQuery } from "../validators";
 
-export const coursesRouter = Router();
-coursesRouter.use(requireAuth);
+/** Lesson fields that are safe to show to anyone who can see the course outline (no URLs, no content). */
+const lessonOutline = {
+  id: lessons.id,
+  moduleId: lessons.moduleId,
+  title: lessons.title,
+  titleHi: lessons.titleHi,
+  contentType: lessons.contentType,
+  videoDurationSeconds: lessons.videoDurationSeconds,
+  sortOrder: lessons.sortOrder,
+  isRequired: lessons.isRequired,
+} as const;
 
-// ── IMPORTANT: specific routes BEFORE /:id to avoid Express matching "module"
-// and "lesson" as an ID ────────────────────────────────────────────────────────
+function courseView(c: Course) {
+  return {
+    id: c.id,
+    slug: c.slug,
+    title: c.title,
+    titleHi: c.titleHi,
+    description: c.description,
+    descriptionHi: c.descriptionHi,
+    category: c.category,
+    difficulty: c.difficulty,
+    thumbnailUrl: c.thumbnailUrl,
+    durationMinutes: c.durationMinutes,
+    isPublished: c.isPublished,
+    archivedAt: c.archivedAt,
+  };
+}
 
-// GET /api/v1/courses/module/:moduleId
-coursesRouter.get("/module/:moduleId", async (req: AuthRequest, res: Response) => {
-  const [mod] = await db
-    .select()
-    .from(modules)
-    .where(eq(modules.id, paramStr(req.params.moduleId)))
-    .limit(1);
+export function coursesRoutes(l: Limiters): Router {
+  const r = Router();
+  r.use(requireAuth, l.authenticated);
 
-  if (!mod) return res.status(404).json({ error: "Module not found" });
+  // Specific routes first: "/module/:id" and "/lesson/:id" must not be read as "/:id".
 
-  const modLessons = await db
-    .select()
-    .from(lessons)
-    .where(eq(lessons.moduleId, mod.id))
-    .orderBy(asc(lessons.sortOrder));
+  // GET /courses/module/:moduleId — a module with its lessons, the learner's ticks and the quiz status
+  r.get("/module/:moduleId", async (req, res) => {
+    const user = req.user!;
+    const moduleId = idParam(req, "moduleId", "Module");
+    const mod = await getModuleContext(moduleId);
+    if (!mod) throw notFound("Module");
+    await getCourseAccess(user, mod.courseId, "content");
 
-  res.json({ ...mod, lessons: modLessons });
-});
+    const [lessonRows, doneRows, state, [quiz]] = await Promise.all([
+      db.select(lessonOutline).from(lessons).where(eq(lessons.moduleId, moduleId)).orderBy(asc(lessons.sortOrder), asc(lessons.createdAt)),
+      db
+        .select({ lessonId: lessonProgress.lessonId })
+        .from(lessonProgress)
+        .innerJoin(lessons, eq(lessons.id, lessonProgress.lessonId))
+        .where(and(eq(lessonProgress.userId, user.id), eq(lessons.moduleId, moduleId), eq(lessonProgress.completed, true))),
+      getModuleState(db, user.id, moduleId),
+      db.select().from(quizzes).where(eq(quizzes.moduleId, moduleId)).limit(1),
+    ]);
+    const done = new Set(doneRows.map((d) => d.lessonId));
+    const evaluated = state ? evaluateModule(state) : null;
 
-// GET /api/v1/courses/lesson/:lessonId
-coursesRouter.get("/lesson/:lessonId", async (req: AuthRequest, res: Response) => {
-  const [lesson] = await db
-    .select()
-    .from(lessons)
-    .where(eq(lessons.id, paramStr(req.params.lessonId)))
-    .limit(1);
+    res.json({
+      id: mod.id,
+      courseId: mod.courseId,
+      title: mod.title,
+      titleHi: mod.titleHi,
+      description: mod.description,
+      descriptionHi: mod.descriptionHi,
+      sortOrder: mod.sortOrder,
+      lessons: lessonRows.map((x) => ({ ...x, completed: done.has(x.id) })),
+      progress: state
+        ? {
+            requiredLessons: state.requiredLessons,
+            requiredDone: state.requiredDone,
+            lessonsDone: evaluated!.lessonsDone,
+            completed: !!state.completedAt || evaluated!.satisfied,
+          }
+        : null,
+      quiz: quiz
+        ? {
+            id: quiz.id,
+            title: quiz.title,
+            passingScore: quiz.passingScore,
+            ...(await getQuizStatus(db, user.id, quiz.id, moduleId)),
+          }
+        : null,
+    });
+  });
 
-  if (!lesson) return res.status(404).json({ error: "Lesson not found" });
-  res.json(lesson);
-});
+  // GET /courses/lesson/:lessonId — the lesson itself (URLs, text) + the learner's progress on it
+  r.get("/lesson/:lessonId", async (req, res) => {
+    const user = req.user!;
+    const lessonId = idParam(req, "lessonId", "Lesson");
+    const ctx = await getLessonContext(lessonId);
+    if (!ctx) throw notFound("Lesson");
+    await getCourseAccess(user, ctx.courseId, "content");
 
-// GET /api/v1/courses  — list published courses (workers) or all (admin/trainer)
-coursesRouter.get("/", async (req: AuthRequest, res: Response) => {
-  const { category } = req.query;
-  const isAdmin = req.user!.role === "admin" || req.user!.role === "trainer";
+    const [row] = await db
+      .select()
+      .from(lessonProgress)
+      .where(and(eq(lessonProgress.userId, user.id), eq(lessonProgress.lessonId, lessonId)))
+      .limit(1);
 
-  // Admins see all courses; workers only see published ones
-  const publishedFilter = isAdmin ? undefined : eq(courses.isPublished, true);
-  const categoryFilter = category
-    ? eq(courses.category, category as any)
-    : undefined;
+    const l0 = ctx.lesson;
+    res.json({
+      id: l0.id,
+      moduleId: ctx.moduleId,
+      courseId: ctx.courseId,
+      title: l0.title,
+      titleHi: l0.titleHi,
+      contentType: l0.contentType,
+      videoUrl: l0.videoUrl,
+      videoProvider: l0.videoProvider,
+      videoDurationSeconds: l0.videoDurationSeconds,
+      content: l0.content,
+      contentHi: l0.contentHi,
+      imageUrl: l0.imageUrl,
+      sortOrder: l0.sortOrder,
+      isRequired: l0.isRequired,
+      progress: toLessonProgressView(l0, row ?? null),
+    });
+  });
 
-  const conditions = [publishedFilter, categoryFilter].filter(Boolean);
-  const where = conditions.length > 1
-    ? and(...(conditions as any))
-    : conditions[0];
+  // GET /courses — learners see published, non-archived courses; staff see everything
+  r.get("/", async (req, res) => {
+    const user = req.user!;
+    const q = parse(courseListQuery, req.query);
 
-  const result = await db
-    .select({
-      id: courses.id,
-      slug: courses.slug,
-      title: courses.title,
-      titleHi: courses.titleHi,
-      description: courses.description,
-      descriptionHi: courses.descriptionHi,
-      category: courses.category,
-      difficulty: courses.difficulty,
-      thumbnailUrl: courses.thumbnailUrl,
-      durationMinutes: courses.durationMinutes,
-      isPublished: courses.isPublished,
-    })
-    .from(courses)
-    .where(where)
-    .orderBy(asc(courses.sortOrder));
+    const conditions: SQL[] = [];
+    if (!isStaffRole(user.role)) conditions.push(eq(courses.isPublished, true), isNull(courses.archivedAt));
+    if (q.category) conditions.push(eq(courses.category, q.category));
+    if (q.q) {
+      const pattern = `%${escapeLike(q.q)}%`;
+      conditions.push(or(ilike(courses.title, pattern), ilike(courses.titleHi, pattern), ilike(courses.description, pattern))!);
+    }
+    const where = conditions.length > 0 ? and(...conditions) : undefined;
 
-  const enrollments = await db
-    .select({
-      courseId: courseEnrollments.courseId,
-      completionPercent: courseEnrollments.completionPercent,
-      completedAt: courseEnrollments.completedAt,
-    })
-    .from(courseEnrollments)
-    .where(eq(courseEnrollments.userId, req.user!.id));
+    const [rows, [totals]] = await Promise.all([
+      db
+        .select()
+        .from(courses)
+        .where(where)
+        .orderBy(asc(courses.sortOrder), asc(courses.title), asc(courses.id))
+        .limit(q.limit)
+        .offset(q.offset),
+      db.select({ total: count() }).from(courses).where(where),
+    ]);
+    res.set("X-Total-Count", String(totals.total));
+    if (rows.length === 0) {
+      res.json([]);
+      return;
+    }
 
-  const enrollMap = new Map(enrollments.map((e) => [e.courseId, e]));
-
-  res.json(
-    result.map((c) => ({
-      ...c,
-      enrolled: enrollMap.has(c.id),
-      completionPercent: enrollMap.get(c.id)?.completionPercent ?? 0,
-      completedAt: enrollMap.get(c.id)?.completedAt ?? null,
-    }))
-  );
-});
-
-// GET /api/v1/courses/:id — course detail with modules+lessons
-coursesRouter.get("/:id", async (req: AuthRequest, res: Response) => {
-  const isAdmin = req.user!.role === "admin" || req.user!.role === "trainer";
-  const courseId = paramStr(req.params.id);
-
-  // Admins can view draft courses; workers only see published
-  const where = isAdmin
-    ? eq(courses.id, courseId)
-    : and(eq(courses.id, courseId), eq(courses.isPublished, true));
-
-  const [course] = await db.select().from(courses).where(where).limit(1);
-  if (!course) return res.status(404).json({ error: "Course not found" });
-
-  const courseModules = await db
-    .select()
-    .from(modules)
-    .where(eq(modules.courseId, course.id))
-    .orderBy(asc(modules.sortOrder));
-
-  const modulesWithLessons = await Promise.all(
-    courseModules.map(async (mod) => {
-      const modLessons = await db
+    const ids = rows.map((c) => c.id);
+    const [enrollRows, countRows] = await Promise.all([
+      db
         .select({
-          id: lessons.id,
-          title: lessons.title,
-          titleHi: lessons.titleHi,
-          contentType: lessons.contentType,
-          videoUrl: lessons.videoUrl,
-          videoProvider: lessons.videoProvider,
-          videoDurationSeconds: lessons.videoDurationSeconds,
-          sortOrder: lessons.sortOrder,
-          isRequired: lessons.isRequired,
+          courseId: courseEnrollments.courseId,
+          completionPercent: courseEnrollments.completionPercent,
+          completedAt: courseEnrollments.completedAt,
         })
+        .from(courseEnrollments)
+        .where(and(eq(courseEnrollments.userId, user.id), inArray(courseEnrollments.courseId, ids))),
+      db
+        .select({
+          courseId: modules.courseId,
+          moduleCount: countDistinct(modules.id),
+          lessonCount: count(lessons.id),
+        })
+        .from(modules)
+        .leftJoin(lessons, eq(lessons.moduleId, modules.id))
+        .where(inArray(modules.courseId, ids))
+        .groupBy(modules.courseId),
+    ]);
+    const enrollment = new Map(enrollRows.map((e) => [e.courseId, e]));
+    const sizes = new Map(countRows.map((c) => [c.courseId, c]));
+
+    res.json(
+      rows.map((c) => ({
+        ...courseView(c),
+        moduleCount: sizes.get(c.id)?.moduleCount ?? 0,
+        lessonCount: sizes.get(c.id)?.lessonCount ?? 0,
+        enrolled: enrollment.has(c.id),
+        completionPercent: enrollment.get(c.id)?.completionPercent ?? 0,
+        completedAt: enrollment.get(c.id)?.completedAt ?? null,
+      }))
+    );
+  });
+
+  // GET /courses/:id — outline: modules and lesson titles, never URLs or lesson text
+  r.get("/:id", async (req, res) => {
+    const user = req.user!;
+    const courseId = idParam(req, "id", "Course");
+    const { course, enrollment, preview } = await getCourseAccess(user, courseId, "outline");
+
+    const [moduleRows, lessonRows, doneRows, states] = await Promise.all([
+      db.select().from(modules).where(eq(modules.courseId, courseId)).orderBy(asc(modules.sortOrder), asc(modules.createdAt)),
+      db
+        .select(lessonOutline)
         .from(lessons)
-        .where(eq(lessons.moduleId, mod.id))
-        .orderBy(asc(lessons.sortOrder));
-      return { ...mod, lessons: modLessons };
-    })
-  );
+        .innerJoin(modules, eq(modules.id, lessons.moduleId))
+        .where(eq(modules.courseId, courseId))
+        .orderBy(asc(lessons.sortOrder), asc(lessons.createdAt)),
+      db
+        .select({ lessonId: lessonProgress.lessonId })
+        .from(lessonProgress)
+        .innerJoin(lessons, eq(lessons.id, lessonProgress.lessonId))
+        .innerJoin(modules, eq(modules.id, lessons.moduleId))
+        .where(and(eq(lessonProgress.userId, user.id), eq(modules.courseId, courseId), eq(lessonProgress.completed, true))),
+      getCourseModuleStates(db, user.id, courseId),
+    ]);
+    const done = new Set(doneRows.map((d) => d.lessonId));
+    const stateOf = new Map(states.map((s) => [s.moduleId, s]));
 
-  const [enrollment] = await db
-    .select()
-    .from(courseEnrollments)
-    .where(
-      and(
-        eq(courseEnrollments.userId, req.user!.id),
-        eq(courseEnrollments.courseId, course.id)
-      )
-    )
-    .limit(1);
+    res.json({
+      ...courseView(course),
+      preview,
+      enrollment: enrollment
+        ? {
+            id: enrollment.id,
+            enrolledAt: enrollment.enrolledAt,
+            completedAt: enrollment.completedAt,
+            completionPercent: enrollment.completionPercent,
+          }
+        : null,
+      modules: moduleRows.map((m) => {
+        const state = stateOf.get(m.id);
+        const evaluated = state ? evaluateModule(state) : null;
+        return {
+          id: m.id,
+          title: m.title,
+          titleHi: m.titleHi,
+          description: m.description,
+          descriptionHi: m.descriptionHi,
+          sortOrder: m.sortOrder,
+          hasQuiz: state?.hasQuiz ?? false,
+          quizPassed: state?.quizPassed ?? false,
+          completed: !!state?.completedAt || (evaluated?.satisfied ?? false),
+          lessons: lessonRows.filter((x) => x.moduleId === m.id).map((x) => ({ ...x, completed: done.has(x.id) })),
+        };
+      }),
+    });
+  });
 
-  res.json({ ...course, modules: modulesWithLessons, enrollment: enrollment || null });
-});
+  // POST /courses/:id/enroll
+  r.post("/:id/enroll", async (req, res) => {
+    const { enrollment, created } = await enrollInCourse(req.user!, idParam(req, "id", "Course"));
+    res.status(created ? 201 : 200).json(enrollment);
+  });
 
-// POST /api/v1/courses/:id/enroll
-coursesRouter.post("/:id/enroll", async (req: AuthRequest, res: Response) => {
-  const [course] = await db
-    .select({ id: courses.id })
-    .from(courses)
-    .where(and(eq(courses.id, paramStr(req.params.id)), eq(courses.isPublished, true)))
-    .limit(1);
-
-  if (!course) return res.status(404).json({ error: "Course not found" });
-
-  const [existing] = await db
-    .select()
-    .from(courseEnrollments)
-    .where(
-      and(
-        eq(courseEnrollments.userId, req.user!.id),
-        eq(courseEnrollments.courseId, course.id)
-      )
-    )
-    .limit(1);
-
-  if (existing) return res.status(409).json({ error: "Already enrolled" });
-
-  const [enrollment] = await db
-    .insert(courseEnrollments)
-    .values({ userId: req.user!.id, courseId: course.id })
-    .returning();
-
-  res.status(201).json(enrollment);
-});
+  return r;
+}

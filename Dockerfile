@@ -1,53 +1,78 @@
-# ── Stage 1: Build ────────────────────────────────────────────────────────────
-FROM node:20-alpine AS builder
+# syntax=docker/dockerfile:1.7
+#
+# The API image. Three stages, so the image that runs holds only what the API needs:
+# the packages listed in server/package.json, the bundled code, the SQL migrations and the
+# pre-built admin console. No Expo / React Native toolchain, no compilers, no source.
+#
+#   docker build -t fastsewa-api .          (the image reports the version in package.json)
+#   docker run --env-file .env -p 5000:5000 fastsewa-api
+#
+# The container applies pending database migrations (docker-entrypoint.sh) and then starts the API.
 
+ARG NODE_VERSION=22
+
+# ── 1. runtime dependencies only ─────────────────────────────────────────────
+FROM node:${NODE_VERSION}-alpine AS server-deps
 WORKDIR /app
+COPY package.json package-lock.json ./
+COPY server/package.json server/package.json
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --omit=dev --workspace=server --ignore-scripts \
+ && rm -f node_modules/@fastsewa/server
 
-# Install deps first (cached layer)
-COPY package*.json ./
-RUN npm ci --ignore-scripts
-
-# Copy source
-COPY server/   ./server/
-COPY shared/   ./shared/
+# ── 2. build the API bundle and the admin console ────────────────────────────
+FROM node:${NODE_VERSION}-alpine AS build
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY server/package.json server/package.json
+RUN --mount=type=cache,target=/root/.npm npm ci --ignore-scripts
 COPY tsconfig.json ./
+COPY shared ./shared
+COPY server ./server
+COPY admin ./admin
+COPY scripts ./scripts
+RUN npm run build
 
-# Compile server to ESM bundle
-RUN npx esbuild server/index.ts \
-      --platform=node \
-      --packages=external \
-      --bundle \
-      --format=esm \
-      --outdir=dist \
-    # Scopes "type":"module" to just dist/, so esbuild's ESM output is
-    # recognized without warnings, without forcing ESM on the rest of the
-    # project (Metro/Babel/ESLint configs here are plain CommonJS).
-    && echo '{"type":"module"}' > dist/package.json
+# ── 3. the image that runs ───────────────────────────────────────────────────
+FROM node:${NODE_VERSION}-alpine AS production
+# Empty by default: the bundle already knows its own version (package.json, see scripts/build-server.mjs).
+# A release pipeline may still pass --build-arg APP_VERSION=... to override what /api/health reports.
+ARG APP_VERSION=
+ARG GIT_SHA=unknown
+LABEL org.opencontainers.image.title="FastSewa Training API" \
+      org.opencontainers.image.version="${APP_VERSION}" \
+      org.opencontainers.image.revision="${GIT_SHA}"
 
-# ── Stage 2: Production image ─────────────────────────────────────────────────
-FROM node:20-alpine AS production
+# tini forwards SIGTERM to Node and reaps child processes, so `docker stop` and platform
+# deploys get the API's graceful shutdown (drain, finish requests, close the database).
+# `-g` (below) sends signals to the whole process group, so a stop that arrives while the entry
+# point is still applying migrations reaches that Node process too instead of only the shell.
+RUN apk add --no-cache tini
+
+# --enable-source-maps: error stacks in the logs point at the TypeScript source, not at the bundle.
+ENV NODE_ENV=production \
+    NODE_OPTIONS=--enable-source-maps \
+    PORT=5000 \
+    APP_VERSION=${APP_VERSION} \
+    UPLOADS_DIR=/data/uploads
 
 WORKDIR /app
+COPY --from=server-deps /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/admin/dist ./admin/dist
+COPY migrations ./migrations
+COPY docker-entrypoint.sh ./docker-entrypoint.sh
 
-# Security: non-root user
-RUN addgroup -g 1001 -S nodejs \
- && adduser  -S fastsewa -u 1001 -G nodejs
+# Local media storage (MEDIA_PROVIDER=local) lives here; mount a persistent volume on it.
+RUN chmod +x docker-entrypoint.sh && mkdir -p /data/uploads && chown -R node:node /data
 
-# Only production node_modules
-COPY package*.json ./
-RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
-
-# Copy compiled bundle
-COPY --from=builder /app/dist ./dist
-
-USER fastsewa
-
+USER node
 EXPOSE 5000
 
-ENV NODE_ENV=production \
-    PORT=5000
+# Liveness only (never touches the database): a database outage must not make the orchestrator
+# restart healthy API containers. Readiness is GET /api/health/ready.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||5000)+'/api/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-  CMD wget -qO- http://localhost:5000/api/health || exit 1
-
+ENTRYPOINT ["/sbin/tini", "-g", "--", "./docker-entrypoint.sh"]
 CMD ["node", "dist/index.js"]

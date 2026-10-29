@@ -15,6 +15,27 @@
       "when": 1787912734126,
       "tag": "0001_add_password_reset",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791874569722,
+      "tag": "0002_production_hardening",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792206214326,
+      "tag": "0003_report_and_purge_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792841087094,
+      "tag": "0004_temp_password_expiry",
+      "breakpoints": true
     }
   ]
 }

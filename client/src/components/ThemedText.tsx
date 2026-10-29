@@ -1,18 +1,15 @@
 import React from "react";
-import { Text, TextProps } from "react-native";
+import { Text, type TextProps } from "react-native";
 import { useTheme } from "@/hooks/useTheme";
-import { Typography } from "@/constants/theme";
+import { MAX_FONT_SCALE, Typography, type TypographyKey } from "@/constants/theme";
 
 interface ThemedTextProps extends TextProps {
-  type?: "h1" | "h2" | "h3" | "h4" | "body" | "small" | "caption";
+  type?: TypographyKey;
+  /** Use the secondary (muted) colour. */
+  muted?: boolean;
 }
 
-export function ThemedText({ type = "body", style, ...props }: ThemedTextProps) {
+export function ThemedText({ type = "body", muted = false, style, ...props }: ThemedTextProps) {
   const { theme } = useTheme();
-  return (
-    <Text
-      style={[{ color: theme.text }, Typography[type], style]}
-      {...props}
-    />
-  );
+  return <Text maxFontSizeMultiplier={MAX_FONT_SCALE} style={[{ color: muted ? theme.textSecondary : theme.text }, Typography[type], style]} {...props} />;
 }

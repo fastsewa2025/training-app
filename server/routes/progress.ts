@@ -1,218 +1,280 @@
-import { Router, Response } from "express";
-import { db } from "../db";
+import { Router } from "express";
+import { and, asc, count, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import {
-  lessonProgress,
-  moduleProgress,
-  courseEnrollments,
-  lessons,
-  modules,
-  courses,
   certificates,
+  courseEnrollments,
+  courses,
+  lessonProgress,
+  lessons,
+  moduleProgress,
+  modules,
 } from "@shared/schema";
-import { eq, and, count, sql, asc } from "drizzle-orm";
-import { requireAuth, AuthRequest } from "../middleware/auth";
-import { z } from "zod";
-import { paramStr } from "../utils/params";
-import { evaluateModuleCompletion } from "../services/progress";
+import { db } from "../db";
+import { err, notFound } from "../errors";
+import { requireAuth } from "../middleware/auth";
+import type { Limiters } from "../middleware/rateLimit";
+import { getCourseAccess, getLessonContext, getModuleContext } from "../services/access";
+import {
+  evaluateModule,
+  getCourseModuleStates,
+  getModuleState,
+  recordLessonProgress,
+  toLessonProgressView,
+} from "../services/progress";
+import { idParam } from "../utils/params";
+import { parse } from "../utils/validate";
+import { lessonProgressBody } from "../validators";
 
-export const progressRouter = Router();
-progressRouter.use(requireAuth);
+export function progressRoutes(l: Limiters): Router {
+  const r = Router();
+  r.use(requireAuth, l.authenticated);
 
-// POST /api/v1/progress/lesson — upsert lesson progress + video resume
-progressRouter.post("/lesson", async (req: AuthRequest, res: Response) => {
-  const schema = z.object({
-    lessonId: z.string().min(1),
-    videoProgressSeconds: z.number().int().min(0).optional(),
-    completed: z.boolean().optional(),
+  /**
+   * POST /progress/lesson — heartbeat + completion.
+   * The app sends this every ~10 s while a lesson is open (position for "resume", and the server
+   * measures time spent itself), and once more with `completed: true` when the learner finishes.
+   */
+  r.post("/lesson", async (req, res) => {
+    const body = parse(lessonProgressBody, req.body);
+    const result = await recordLessonProgress(req.user!, {
+      lessonId: body.lessonId,
+      positionSeconds: body.positionSeconds ?? body.videoProgressSeconds,
+      completed: body.completed,
+    });
+    res.json(result);
   });
 
-  const result = schema.safeParse(req.body);
-  if (!result.success) return res.status(400).json({ error: result.error.flatten() });
+  // GET /progress/lesson/:lessonId — resume point + how close the learner is to being allowed to finish
+  r.get("/lesson/:lessonId", async (req, res) => {
+    const lessonId = idParam(req, "lessonId", "Lesson");
+    const ctx = await getLessonContext(lessonId);
+    if (!ctx) throw notFound("Lesson");
+    await getCourseAccess(req.user!, ctx.courseId, "content");
+    const [row] = await db
+      .select()
+      .from(lessonProgress)
+      .where(and(eq(lessonProgress.userId, req.user!.id), eq(lessonProgress.lessonId, lessonId)))
+      .limit(1);
+    res.json(toLessonProgressView(ctx.lesson, row ?? null));
+  });
 
-  const { lessonId, videoProgressSeconds, completed } = result.data;
+  // GET /progress/module/:moduleId
+  r.get("/module/:moduleId", async (req, res) => {
+    const user = req.user!;
+    const moduleId = idParam(req, "moduleId", "Module");
+    const mod = await getModuleContext(moduleId);
+    if (!mod) throw notFound("Module");
+    await getCourseAccess(user, mod.courseId, "content");
 
-  const [progress] = await db
-    .insert(lessonProgress)
-    .values({
-      userId: req.user!.id,
-      lessonId,
-      videoProgressSeconds: videoProgressSeconds ?? 0,
-      completed: completed ?? false,
-      completedAt: completed ? new Date() : undefined,
-    })
-    .onConflictDoUpdate({
-      target: [lessonProgress.userId, lessonProgress.lessonId],
-      set: {
-        videoProgressSeconds: sql`EXCLUDED.video_progress_seconds`,
-        completed: sql`EXCLUDED.completed`,
-        completedAt: sql`EXCLUDED.completed_at`,
-        updatedAt: new Date(),
-      },
-    })
-    .returning();
+    const state = await getModuleState(db, user.id, moduleId);
+    if (!state) throw notFound("Module");
+    const evaluated = evaluateModule(state);
+    const rows = await db
+      .select({
+        lessonId: lessonProgress.lessonId,
+        completed: lessonProgress.completed,
+        videoProgressSeconds: lessonProgress.videoProgressSeconds,
+        watchedSeconds: lessonProgress.watchedSeconds,
+        completedAt: lessonProgress.completedAt,
+      })
+      .from(lessonProgress)
+      .innerJoin(lessons, eq(lessons.id, lessonProgress.lessonId))
+      .where(and(eq(lessonProgress.userId, user.id), eq(lessons.moduleId, moduleId)));
 
-  if (completed) {
-    await checkAndUpdateModuleProgress(req.user!.id, lessonId);
-  }
+    res.json({
+      moduleId,
+      totalLessons: state.totalLessons,
+      requiredLessons: state.requiredLessons,
+      requiredDone: state.requiredDone,
+      lessonsDone: evaluated.lessonsDone,
+      hasQuiz: state.hasQuiz,
+      quizPassed: state.quizPassed,
+      completed: !!state.completedAt || evaluated.satisfied,
+      completedAt: state.completedAt,
+      lessons: rows,
+    });
+  });
 
-  res.json(progress);
-});
+  // GET /progress/all-lessons — every lesson the user has touched (small: bounded by the catalogue size)
+  r.get("/all-lessons", async (req, res) => {
+    const rows = await db
+      .select({
+        lessonId: lessonProgress.lessonId,
+        completed: lessonProgress.completed,
+        videoProgressSeconds: lessonProgress.videoProgressSeconds,
+        completedAt: lessonProgress.completedAt,
+      })
+      .from(lessonProgress)
+      .where(eq(lessonProgress.userId, req.user!.id));
+    res.json(rows);
+  });
 
-// GET /api/v1/progress/lesson/:lessonId — get resume point
-progressRouter.get("/lesson/:lessonId", async (req: AuthRequest, res: Response) => {
-  const [progress] = await db
-    .select()
-    .from(lessonProgress)
-    .where(
-      and(
-        eq(lessonProgress.userId, req.user!.id),
-        eq(lessonProgress.lessonId, paramStr(req.params.lessonId))
-      )
-    )
-    .limit(1);
+  // GET /progress/course/:courseId — progress inside ONE course (the old endpoint returned the user's progress in every course)
+  r.get("/course/:courseId", async (req, res) => {
+    const user = req.user!;
+    const courseId = idParam(req, "courseId", "Course");
+    const { enrollment } = await getCourseAccess(user, courseId, "content");
+    if (!enrollment) throw err("NOT_ENROLLED");
 
-  res.json(progress || { videoProgressSeconds: 0, completed: false });
-});
-
-// GET /api/v1/progress/all-lessons — all lesson progress for current user (used by TasksScreen)
-progressRouter.get("/all-lessons", async (req: AuthRequest, res: Response) => {
-  const progress = await db
-    .select({
-      lessonId: lessonProgress.lessonId,
-      completed: lessonProgress.completed,
-      videoProgressSeconds: lessonProgress.videoProgressSeconds,
-      completedAt: lessonProgress.completedAt,
-    })
-    .from(lessonProgress)
-    .where(eq(lessonProgress.userId, req.user!.id));
-
-  res.json(progress);
-});
-
-// GET /api/v1/progress/course/:courseId
-progressRouter.get("/course/:courseId", async (req: AuthRequest, res: Response) => {
-  const userId = req.user!.id;
-
-  const [enrollment] = await db
-    .select()
-    .from(courseEnrollments)
-    .where(
-      and(
-        eq(courseEnrollments.userId, userId),
-        eq(courseEnrollments.courseId, paramStr(req.params.courseId))
-      )
-    )
-    .limit(1);
-
-  if (!enrollment) return res.status(404).json({ error: "Not enrolled" });
-
-  const modProgress = await db
-    .select()
-    .from(moduleProgress)
-    .where(eq(moduleProgress.userId, userId));
-
-  const lessonProg = await db
-    .select()
-    .from(lessonProgress)
-    .where(eq(lessonProgress.userId, userId));
-
-  res.json({ enrollment, moduleProgress: modProgress, lessonProgress: lessonProg });
-});
-
-// GET /api/v1/progress/enrolled-courses
-// Returns all enrolled courses with their full module+lesson tree (for TasksScreen)
-progressRouter.get("/enrolled-courses", async (req: AuthRequest, res: Response) => {
-  const userId = req.user!.id;
-
-  // Get enrolled course IDs
-  const enrollments = await db
-    .select({ courseId: courseEnrollments.courseId, completionPercent: courseEnrollments.completionPercent })
-    .from(courseEnrollments)
-    .where(eq(courseEnrollments.userId, userId));
-
-  if (enrollments.length === 0) return res.json([]);
-
-  const enrolledIds = enrollments.map((e) => e.courseId);
-  const enrollMap = new Map(enrollments.map((e) => [e.courseId, e.completionPercent]));
-
-  // Fetch each enrolled course with its modules and lessons
-  const results = await Promise.all(
-    enrolledIds.map(async (courseId) => {
-      const [course] = await db
-        .select({ id: courses.id, title: courses.title, titleHi: courses.titleHi, category: courses.category })
-        .from(courses)
-        .where(eq(courses.id, courseId))
-        .limit(1);
-      if (!course) return null;
-
-      const courseModules = await db
-        .select()
-        .from(modules)
-        .where(eq(modules.courseId, courseId))
-        .orderBy(asc(modules.sortOrder));
-
-      const modulesWithLessons = await Promise.all(
-        courseModules.map(async (mod) => {
-          const modLessons = await db
-            .select({ id: lessons.id, title: lessons.title, titleHi: lessons.titleHi, contentType: lessons.contentType, sortOrder: lessons.sortOrder })
-            .from(lessons)
-            .where(eq(lessons.moduleId, mod.id))
-            .orderBy(asc(lessons.sortOrder));
-          return { ...mod, lessons: modLessons };
+    const [states, lessonRows] = await Promise.all([
+      getCourseModuleStates(db, user.id, courseId),
+      db
+        .select({
+          lessonId: lessonProgress.lessonId,
+          completed: lessonProgress.completed,
+          videoProgressSeconds: lessonProgress.videoProgressSeconds,
+          watchedSeconds: lessonProgress.watchedSeconds,
+          completedAt: lessonProgress.completedAt,
         })
-      );
-
-      return { ...course, completionPercent: enrollMap.get(courseId) ?? 0, modules: modulesWithLessons };
-    })
-  );
-
-  res.json(results.filter(Boolean));
-});
-
-// GET /api/v1/progress/stats
-progressRouter.get("/stats", async (req: AuthRequest, res: Response) => {
-  const userId = req.user!.id;
-
-  const [[completedMods], [completedLessons], [certs], [enrolledCourses]] =
-    await Promise.all([
-      db
-        .select({ count: count() })
-        .from(moduleProgress)
-        .where(and(eq(moduleProgress.userId, userId), sql`completed_at IS NOT NULL`)),
-      db
-        .select({ count: count() })
         .from(lessonProgress)
-        .where(and(eq(lessonProgress.userId, userId), eq(lessonProgress.completed, true))),
+        .innerJoin(lessons, eq(lessons.id, lessonProgress.lessonId))
+        .innerJoin(modules, eq(modules.id, lessons.moduleId))
+        .where(and(eq(lessonProgress.userId, user.id), eq(modules.courseId, courseId))),
+    ]);
+
+    res.json({
+      enrollment: {
+        id: enrollment.id,
+        enrolledAt: enrollment.enrolledAt,
+        completedAt: enrollment.completedAt,
+        completionPercent: enrollment.completionPercent,
+      },
+      modules: states.map((s) => {
+        const e = evaluateModule(s);
+        return {
+          moduleId: s.moduleId,
+          requiredLessons: s.requiredLessons,
+          requiredDone: s.requiredDone,
+          lessonsDone: e.lessonsDone,
+          hasQuiz: s.hasQuiz,
+          quizPassed: s.quizPassed,
+          completed: !!s.completedAt || e.satisfied,
+          completedAt: s.completedAt,
+        };
+      }),
+      lessons: lessonRows,
+    });
+  });
+
+  /**
+   * GET /progress/enrolled-courses — enrolled courses with their module/lesson tree and ticks (To-Do tab).
+   * Four queries in total regardless of how many courses the learner is enrolled in.
+   */
+  r.get("/enrolled-courses", async (req, res) => {
+    const userId = req.user!.id;
+
+    const enrolled = await db
+      .select({
+        id: courses.id,
+        title: courses.title,
+        titleHi: courses.titleHi,
+        category: courses.category,
+        completionPercent: courseEnrollments.completionPercent,
+        completedAt: courseEnrollments.completedAt,
+      })
+      .from(courseEnrollments)
+      .innerJoin(courses, eq(courses.id, courseEnrollments.courseId))
+      .where(and(eq(courseEnrollments.userId, userId), eq(courses.isPublished, true), isNull(courses.archivedAt)))
+      .orderBy(asc(courses.sortOrder), asc(courses.title));
+    if (enrolled.length === 0) {
+      res.json([]);
+      return;
+    }
+
+    const courseIds = enrolled.map((c) => c.id);
+    const [moduleRows, lessonRows, doneRows] = await Promise.all([
       db
-        .select({ count: count() })
+        .select({ id: modules.id, courseId: modules.courseId, title: modules.title, titleHi: modules.titleHi, sortOrder: modules.sortOrder })
+        .from(modules)
+        .where(inArray(modules.courseId, courseIds))
+        .orderBy(asc(modules.sortOrder), asc(modules.createdAt)),
+      db
+        .select({
+          id: lessons.id,
+          moduleId: lessons.moduleId,
+          title: lessons.title,
+          titleHi: lessons.titleHi,
+          contentType: lessons.contentType,
+          sortOrder: lessons.sortOrder,
+          isRequired: lessons.isRequired,
+        })
+        .from(lessons)
+        .innerJoin(modules, eq(modules.id, lessons.moduleId))
+        .where(inArray(modules.courseId, courseIds))
+        .orderBy(asc(lessons.sortOrder), asc(lessons.createdAt)),
+      db
+        .select({ lessonId: lessonProgress.lessonId })
+        .from(lessonProgress)
+        .innerJoin(lessons, eq(lessons.id, lessonProgress.lessonId))
+        .innerJoin(modules, eq(modules.id, lessons.moduleId))
+        .where(and(eq(lessonProgress.userId, userId), eq(lessonProgress.completed, true), inArray(modules.courseId, courseIds))),
+    ]);
+
+    const done = new Set(doneRows.map((d) => d.lessonId));
+    const lessonsByModule = new Map<string, typeof lessonRows>();
+    for (const x of lessonRows) {
+      const list = lessonsByModule.get(x.moduleId) ?? [];
+      list.push(x);
+      lessonsByModule.set(x.moduleId, list);
+    }
+    const modulesByCourse = new Map<string, typeof moduleRows>();
+    for (const m of moduleRows) {
+      const list = modulesByCourse.get(m.courseId) ?? [];
+      list.push(m);
+      modulesByCourse.set(m.courseId, list);
+    }
+
+    res.json(
+      enrolled.map((c) => ({
+        ...c,
+        modules: (modulesByCourse.get(c.id) ?? []).map((m) => ({
+          id: m.id,
+          title: m.title,
+          titleHi: m.titleHi,
+          sortOrder: m.sortOrder,
+          lessons: (lessonsByModule.get(m.id) ?? []).map((x) => ({ ...x, completed: done.has(x.id) })),
+        })),
+      }))
+    );
+  });
+
+  // GET /progress/stats
+  r.get("/stats", async (req, res) => {
+    const userId = req.user!.id;
+    const [[mods], [lessonStats], [certs], [enrollStats]] = await Promise.all([
+      db
+        .select({ n: count() })
+        .from(moduleProgress)
+        .where(and(eq(moduleProgress.userId, userId), isNotNull(moduleProgress.completedAt))),
+      db
+        .select({
+          completed: sql<number>`count(*) FILTER (WHERE ${lessonProgress.completed})::int`,
+          seconds: sql<number>`COALESCE(sum(${lessonProgress.watchedSeconds}), 0)::int`,
+        })
+        .from(lessonProgress)
+        .where(eq(lessonProgress.userId, userId)),
+      db
+        .select({ n: count() })
         .from(certificates)
-        .where(eq(certificates.userId, userId)),
+        .where(and(eq(certificates.userId, userId), isNull(certificates.revokedAt))),
       db
-        .select({ count: count() })
+        .select({
+          enrolled: count(),
+          completed: sql<number>`count(${courseEnrollments.completedAt})::int`,
+        })
         .from(courseEnrollments)
         .where(eq(courseEnrollments.userId, userId)),
     ]);
 
-  res.json({
-    modulesCompleted: completedMods.count,
-    lessonsCompleted: completedLessons.count,
-    certificatesEarned: certs.count,
-    coursesEnrolled: enrolledCourses.count,
+    res.json({
+      modulesCompleted: mods.n,
+      lessonsCompleted: lessonStats.completed,
+      certificatesEarned: certs.n,
+      coursesEnrolled: enrollStats.enrolled,
+      coursesCompleted: enrollStats.completed,
+      learningMinutes: Math.round(lessonStats.seconds / 60),
+    });
   });
-});
 
-// ─── Internal helper ──────────────────────────────────────────────────────────
-// Resolves lessonId -> moduleId, then defers to the shared evaluator in
-// services/progress.ts, which is also called from quiz.ts on quiz submit.
-// That's the single source of truth for module/course completion + cert
-// issuance — don't reimplement the check here.
-async function checkAndUpdateModuleProgress(userId: string, lessonId: string) {
-  const [lesson] = await db
-    .select({ moduleId: lessons.moduleId })
-    .from(lessons)
-    .where(eq(lessons.id, lessonId))
-    .limit(1);
-  if (!lesson) return;
-
-  await evaluateModuleCompletion(userId, lesson.moduleId);
+  return r;
 }

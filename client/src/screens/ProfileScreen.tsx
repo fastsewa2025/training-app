@@ -1,296 +1,194 @@
-import React from "react";
-import {
-  View, StyleSheet, ScrollView, Pressable, Alert, ActivityIndicator,
-} from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { useQuery } from "@tanstack/react-query";
+import Feather from "@expo/vector-icons/Feather"; // this icon set only: importing the package root would bundle every font (about 4 MB)
+import Constants from "expo-constants";
+import React, { useState } from "react";
+import { Linking, Pressable, RefreshControl, ScrollView, Share, StyleSheet, View } from "react-native";
 import { useTranslation } from "react-i18next";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { Feather } from "@expo/vector-icons";
-import * as Linking from "expo-linking";
-import { useNavigation } from "@react-navigation/native";
-import { NativeStackNavigationProp } from "@react-navigation/native-stack";
-
+import { LanguageSwitch } from "@/components/LanguageSwitch";
+import { SupportLine } from "@/components/SupportLine";
 import { ThemedText } from "@/components/ThemedText";
+import { Badge, Banner, Button, Card, Screen, SectionTitle } from "@/components/ui";
+import { BorderRadius, MIN_TOUCH, Spacing } from "@/constants/theme";
+import { useAppConfig } from "@/hooks/useAppConfig";
+import { useAuth, useUser } from "@/hooks/useAuth";
+import { useCertificateActions } from "@/hooks/useCertificateActions";
+import { useLang } from "@/hooks/useLang";
 import { useTheme } from "@/hooks/useTheme";
-import { useAuth } from "@/hooks/useAuth";
-import { apiClient } from "@/lib/api";
-import { Colors, Spacing, BorderRadius, Typography } from "@/constants/theme";
-import { RootStackParamList } from "@/navigation/RootStackNavigator";
-
-type NavProp = NativeStackNavigationProp<RootStackParamList>;
-
-interface CertItem {
-  id: string;
-  certificateNumber: string;
-  courseTitle: string;
-  courseTitleHi?: string;
-  courseCategory: string;
-  earnedAt: string;
-}
-
-const CAT_COLORS: Record<string, string> = {
-  safety: "#E74C3C", basics: "#3498DB", tools: "#F39C12",
-  discipline: "#9B59B6", electrical: "#F1C40F", plumbing: "#1ABC9C",
-  masonry: "#E67E22", equipment: "#2ECC71",
-};
+import { confirmAction } from "@/lib/confirm";
+import { errorMessage } from "@/lib/errors";
+import { formatDate, formatMonthYear, initialOf, pick } from "@/lib/format";
+import { certificatesOptions, statsOptions } from "@/lib/queries";
+import { countText } from "@/lib/translate";
+import { useAppNavigation } from "@/navigation/hooks";
 
 export default function ProfileScreen() {
-  const { t, i18n } = useTranslation();
-  const { user, logout, updateProfile } = useAuth();
+  const { t } = useTranslation();
   const { theme } = useTheme();
-  const navigation = useNavigation<NavProp>();
+  const lang = useLang();
+  const user = useUser();
+  const { logout, exportData } = useAuth();
+  const { config } = useAppConfig();
+  const navigation = useAppNavigation();
+  const stats = useQuery(statsOptions());
+  const certificates = useQuery(certificatesOptions());
+  const certActions = useCertificateActions();
+  const [notice, setNotice] = useState<unknown>(null);
+  const [exporting, setExporting] = useState(false);
 
-  const { data: certs = [], isLoading: certsLoading } = useQuery<CertItem[]>({
-    queryKey: ["certificates"],
-    queryFn: () => apiClient.get("/api/v1/certificates"),
-  });
-
-  const { data: stats } = useQuery<{
-    modulesCompleted: number;
-    lessonsCompleted: number;
-    certificatesEarned: number;
-    coursesEnrolled: number;
-  }>({
-    queryKey: ["stats"],
-    queryFn: () => apiClient.get("/api/v1/progress/stats"),
-  });
-
-  const downloadMut = useMutation({
-    mutationFn: (certId: string) =>
-      apiClient.get<{ url: string }>(`/api/v1/certificates/${certId}/pdf`),
-    onSuccess: (_data, certId) => {
-      const url = `${process.env.EXPO_PUBLIC_API_URL}/api/v1/certificates/${certId}/pdf`;
-      Linking.openURL(url);
-    },
-  });
-
-  const handleLogout = () => {
-    Alert.alert(t("logout"), "Are you sure?", [
-      { text: "Cancel", style: "cancel" },
-      { text: t("logout"), style: "destructive", onPress: logout },
-    ]);
+  const confirmLogout = async () => {
+    const yes = await confirmAction({ title: t("profile.logoutTitle"), message: t("profile.logoutBody"), confirmLabel: t("profile.logout"), cancelLabel: t("common.cancel"), destructive: true });
+    if (yes) await logout();
   };
 
-  const handleLangSwitch = (lang: "en" | "hi") => {
-    updateProfile({ preferredLang: lang });
-    i18n.changeLanguage(lang);
+  const downloadMyData = async () => {
+    setExporting(true);
+    setNotice(null);
+    try {
+      await Share.share({ title: t("profile.myData"), message: await exportData() });
+    } catch (e) {
+      setNotice(e);
+    } finally {
+      setExporting(false);
+    }
   };
 
-  const memberDate = user?.createdAt
-    ? new Date(user.createdAt).toLocaleDateString("en-IN", {
-        month: "short", year: "numeric",
-      })
-    : "";
+  const open = (url: string | null) => {
+    if (url) void Linking.openURL(url);
+  };
+
+  const s = stats.data;
+  const learning = s ? (s.learningMinutes < 60 ? countText(t, "common.minutes", s.learningMinutes) : t("profile.hours", { n: (s.learningMinutes / 60).toFixed(1) })) : "–";
+  const tiles: { label: string; value: string }[] = [
+    { label: t("profile.stats.courses"), value: s ? String(s.coursesEnrolled) : "–" },
+    { label: t("profile.stats.completed"), value: s ? String(s.coursesCompleted) : "–" },
+    { label: t("profile.stats.lessons"), value: s ? String(s.lessonsCompleted) : "–" },
+    { label: t("profile.stats.modules"), value: s ? String(s.modulesCompleted) : "–" },
+    { label: t("profile.stats.certificates"), value: s ? String(s.certificatesEarned) : "–" },
+    { label: t("profile.stats.time"), value: learning },
+  ];
 
   return (
-    <SafeAreaView style={[styles.safe, { backgroundColor: theme.backgroundRoot }]}>
-      <ScrollView contentContainerStyle={styles.scroll}>
-        {/* Avatar + name */}
-        <View style={styles.avatarSection}>
-          <View style={[styles.avatar, { backgroundColor: Colors.light.primary }]}>
-            <ThemedText style={styles.avatarInitial}>
-              {user?.displayName?.[0]?.toUpperCase() || "W"}
+    <Screen edges={["top", "left", "right"]}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        refreshControl={
+          <RefreshControl
+            refreshing={stats.isRefetching || certificates.isRefetching}
+            onRefresh={() => {
+              void stats.refetch();
+              void certificates.refetch();
+            }}
+            tintColor={theme.primaryText}
+            colors={[theme.primaryText]}
+          />
+        }
+      >
+        <View style={styles.identity}>
+          <View style={[styles.avatar, { backgroundColor: theme.primary }]} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+            <ThemedText type="h1" style={{ color: theme.onPrimary }}>
+              {initialOf(user.displayName)}
             </ThemedText>
           </View>
-          <ThemedText type="h2">{user?.displayName}</ThemedText>
-          <ThemedText style={{ color: theme.textSecondary }}>@{user?.username}</ThemedText>
-          {memberDate && (
-            <ThemedText type="caption" style={{ color: theme.textSecondary }}>
-              {t("memberSince", { date: memberDate })}
+          <View style={{ flex: 1, gap: 2 }}>
+            <ThemedText type="h2" accessibilityRole="header" numberOfLines={2}>
+              {user.displayName}
             </ThemedText>
-          )}
-          {user?.role !== "worker" && (
-            <View style={[styles.roleBadge, { backgroundColor: Colors.light.primary + "20" }]}>
-              <ThemedText type="caption" style={{ color: Colors.light.primary, fontWeight: "700", textTransform: "uppercase" }}>
-                {user?.role}
-              </ThemedText>
-            </View>
-          )}
+            <ThemedText muted>@{user.username}</ThemedText>
+            <ThemedText type="small" muted>
+              {t("profile.memberSince", { date: formatMonthYear(user.createdAt, lang) })}
+            </ThemedText>
+            {user.role !== "worker" ? <Badge label={t(`profile.role.${user.role}`)} color={theme.text} tint={theme.surfaceAlt} /> : null}
+          </View>
         </View>
 
-        {/* Stats */}
-        {stats && (
-          <View style={styles.statsGrid}>
-            {[
-              { label: t("coursesEnrolled"), value: stats.coursesEnrolled, icon: "book-open" },
-              { label: t("modulesCompleted"), value: stats.modulesCompleted, icon: "check-circle" },
-              { label: t("certificates"), value: stats.certificatesEarned, icon: "award" },
-            ].map((s) => (
-              <View key={s.label} style={[styles.statBox, { backgroundColor: theme.backgroundDefault }]}>
-                <Feather name={s.icon as any} size={22} color={Colors.light.primary} />
-                <ThemedText type="h2">{s.value}</ThemedText>
-                <ThemedText type="caption" style={{ color: theme.textSecondary, textAlign: "center" }}>
-                  {s.label}
+        <View style={styles.tiles}>
+          {tiles.map((tile) => (
+            <View key={tile.label} style={[styles.tile, { backgroundColor: theme.surface, borderColor: theme.border }]} accessible accessibilityLabel={`${tile.label}: ${tile.value}`}>
+              <ThemedText type="h2">{tile.value}</ThemedText>
+              <ThemedText type="caption" muted style={{ textAlign: "center" }}>
+                {tile.label}
+              </ThemedText>
+            </View>
+          ))}
+        </View>
+
+        <SectionTitle>{t("profile.language")}</SectionTitle>
+        <LanguageSwitch />
+
+        <SectionTitle>{t("profile.certificates")}</SectionTitle>
+        {certActions.error ? <Banner tone="error">{errorMessage(certActions.error, t)}</Banner> : null}
+        {certificates.data && certificates.data.length === 0 ? (
+          <Card style={{ gap: Spacing.xs }}>
+            <ThemedText type="h4">{t("profile.noCertificates")}</ThemedText>
+            <ThemedText muted>{t("profile.noCertificatesBody")}</ThemedText>
+          </Card>
+        ) : null}
+        {certificates.data?.map((certificate) => (
+          <Card key={certificate.id} style={{ gap: Spacing.sm }}>
+            <View style={styles.certHead}>
+              <Feather name="award" size={26} color={certificate.revoked ? theme.textSecondary : theme.success} />
+              <View style={{ flex: 1 }}>
+                <ThemedText type="h4" numberOfLines={2}>
+                  {pick(lang, certificate.courseTitle, certificate.courseTitleHi)}
+                </ThemedText>
+                <ThemedText type="small" muted>
+                  {t("profile.earnedOn", { date: formatDate(certificate.earnedAt, lang) })} · {t("profile.certNo", { number: certificate.certificateNumber })}
                 </ThemedText>
               </View>
-            ))}
-          </View>
-        )}
-
-        {/* Language */}
-        <View style={[styles.section, { backgroundColor: theme.backgroundDefault }]}>
-          <ThemedText type="h4" style={styles.sectionTitle}>{t("language")}</ThemedText>
-          <View style={styles.langRow}>
-            {(["en", "hi"] as const).map((lang) => (
-              <Pressable
-                key={lang}
-                onPress={() => handleLangSwitch(lang)}
-                style={[
-                  styles.langBtn,
-                  {
-                    backgroundColor:
-                      i18n.language === lang ? Colors.light.primary : theme.backgroundSecondary,
-                    borderColor:
-                      i18n.language === lang ? Colors.light.primary : theme.border,
-                  },
-                ]}
-              >
-                <ThemedText
-                  style={[
-                    styles.langText,
-                    { color: i18n.language === lang ? "#fff" : theme.text },
-                  ]}
-                >
-                  {lang === "en" ? "🇬🇧 English" : "🇮🇳 हिन्दी"}
-                </ThemedText>
-              </Pressable>
-            ))}
-          </View>
-        </View>
-
-        {/* Certificates */}
-        <View style={[styles.section, { backgroundColor: theme.backgroundDefault }]}>
-          <View style={styles.sectionHeader}>
-            <Feather name="award" size={20} color={Colors.light.primary} />
-            <ThemedText type="h4">{t("certificates")}</ThemedText>
-          </View>
-
-          {certsLoading ? (
-            <ActivityIndicator color={Colors.light.primary} style={{ padding: Spacing.lg }} />
-          ) : certs.length === 0 ? (
-            <View style={styles.emptyCerts}>
-              <ThemedText style={{ fontSize: 40 }}>🏆</ThemedText>
-              <ThemedText style={{ color: theme.textSecondary, textAlign: "center" }}>
-                {t("completeCourses")}
-              </ThemedText>
             </View>
-          ) : (
-            certs.map((cert) => {
-              const catColor = CAT_COLORS[cert.courseCategory] || Colors.light.primary;
-              const certTitle =
-                i18n.language === "hi" && cert.courseTitleHi ? cert.courseTitleHi : cert.courseTitle;
-              return (
-                <View
-                  key={cert.id}
-                  style={[styles.certCard, { borderLeftColor: catColor, borderLeftWidth: 4 }]}
-                >
-                  <View style={[styles.certIcon, { backgroundColor: catColor }]}>
-                    <Feather name="award" size={18} color="#fff" />
-                  </View>
-                  <View style={styles.certInfo}>
-                    <ThemedText style={{ fontWeight: "600" }} numberOfLines={2}>
-                      {certTitle}
-                    </ThemedText>
-                    <ThemedText type="caption" style={{ color: theme.textSecondary }}>
-                      {t("earnedOn", {
-                        date: new Date(cert.earnedAt).toLocaleDateString("en-IN", {
-                          day: "numeric", month: "short", year: "numeric",
-                        }),
-                      })}
-                    </ThemedText>
-                    <ThemedText type="caption" style={{ color: theme.textSecondary }}>
-                      {t("certNo", { number: cert.certificateNumber })}
-                    </ThemedText>
-                  </View>
-                  <Pressable
-                    onPress={() => downloadMut.mutate(cert.id)}
-                    style={[styles.downloadBtn, { backgroundColor: catColor + "20" }]}
-                  >
-                    <Feather name="download" size={16} color={catColor} />
-                  </Pressable>
-                </View>
-              );
-            })
-          )}
-        </View>
+            {certificate.revoked ? (
+              <Badge label={t("profile.revoked")} color={theme.error} tint={theme.errorTint} />
+            ) : (
+              <View style={styles.certActions}>
+                <Button label={t("profile.download")} icon="download" compact onPress={() => void certActions.download(certificate.id)} loading={certActions.busyId === certificate.id} style={{ flex: 1 }} />
+                <Button label={t("profile.share")} icon="share-2" variant="secondary" compact onPress={() => void certActions.share(certificate, lang)} style={{ flex: 1 }} />
+              </View>
+            )}
+          </Card>
+        ))}
 
-        {/* Change Password */}
-        <Pressable
-          onPress={() => navigation.navigate("ChangePassword")}
-          style={[styles.logoutBtn, { borderColor: theme.border }]}
-        >
-          <Feather name="lock" size={18} color={theme.text} />
-          <ThemedText style={{ fontWeight: "600" }}>
-            {t("changePassword")}
-          </ThemedText>
-        </Pressable>
+        <SectionTitle>{t("profile.account")}</SectionTitle>
+        {notice ? <Banner tone="error">{errorMessage(notice, t)}</Banner> : null}
+        <Card style={styles.menu}>
+          <Row icon="edit-2" label={t("profile.editProfile")} onPress={() => navigation.navigate("EditProfile")} />
+          <Row icon="lock" label={t("profile.changePassword")} onPress={() => navigation.navigate("ChangePassword")} />
+          {config.privacyPolicyUrl ? <Row icon="shield" label={t("profile.privacy")} onPress={() => open(config.privacyPolicyUrl)} /> : null}
+          {config.termsUrl ? <Row icon="file-text" label={t("profile.terms")} onPress={() => open(config.termsUrl)} /> : null}
+          <Row icon="download-cloud" label={exporting ? t("common.loading") : t("profile.myData")} onPress={() => void downloadMyData()} />
+          <Row icon="trash-2" label={t("profile.deleteAccount")} danger onPress={() => navigation.navigate("DeleteAccount")} />
+        </Card>
 
-        {/* Logout */}
-        <Pressable
-          onPress={handleLogout}
-          style={[styles.logoutBtn, { borderColor: Colors.light.error }]}
-        >
-          <Feather name="log-out" size={18} color={Colors.light.error} />
-          <ThemedText style={{ color: Colors.light.error, fontWeight: "600" }}>
-            {t("logout")}
-          </ThemedText>
-        </Pressable>
+        <SupportLine config={config} />
+
+        <Button label={t("profile.logout")} variant="danger" icon="log-out" onPress={() => void confirmLogout()} />
+        <ThemedText type="caption" muted style={{ textAlign: "center" }}>
+          {t("profile.version", { version: Constants.expoConfig?.version ?? "" })}
+        </ThemedText>
       </ScrollView>
-    </SafeAreaView>
+    </Screen>
+  );
+}
+
+function Row({ icon, label, onPress, danger = false }: { icon: keyof typeof Feather.glyphMap; label: string; onPress: () => void; danger?: boolean }) {
+  const { theme } = useTheme();
+  const color = danger ? theme.error : theme.text;
+  return (
+    <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={label} style={({ pressed }) => [styles.row, pressed && { opacity: 0.7 }]}>
+      <Feather name={icon} size={22} color={color} />
+      <ThemedText style={{ flex: 1, color }}>{label}</ThemedText>
+      <Feather name="chevron-right" size={20} color={theme.textSecondary} />
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1 },
-  scroll: { padding: Spacing.lg, paddingBottom: 100, gap: Spacing.lg },
-  avatarSection: { alignItems: "center", gap: Spacing.sm, paddingVertical: Spacing.lg },
-  avatar: {
-    width: 88, height: 88, borderRadius: 44,
-    alignItems: "center", justifyContent: "center",
-  },
-  avatarInitial: { fontSize: 36, fontWeight: "700", color: "#fff" },
-  roleBadge: {
-    paddingHorizontal: Spacing.md, paddingVertical: 4,
-    borderRadius: BorderRadius.full, marginTop: 4,
-  },
-  statsGrid: { flexDirection: "row", gap: Spacing.sm },
-  statBox: {
-    flex: 1, padding: Spacing.md, borderRadius: BorderRadius.md,
-    alignItems: "center", gap: 4,
-    shadowColor: "#000", shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06, shadowRadius: 4, elevation: 2,
-  },
-  section: {
-    borderRadius: BorderRadius.md, padding: Spacing.lg, gap: Spacing.md,
-    shadowColor: "#000", shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06, shadowRadius: 4, elevation: 2,
-  },
-  sectionHeader: { flexDirection: "row", alignItems: "center", gap: Spacing.sm },
-  sectionTitle: {},
-  langRow: { flexDirection: "row", gap: Spacing.md },
-  langBtn: {
-    flex: 1, height: 48, borderRadius: BorderRadius.sm, borderWidth: 1.5,
-    alignItems: "center", justifyContent: "center",
-  },
-  langText: { ...Typography.body, fontWeight: "600" },
-  emptyCerts: { alignItems: "center", gap: Spacing.sm, paddingVertical: Spacing.xl },
-  certCard: {
-    flexDirection: "row", alignItems: "center", gap: Spacing.md,
-    backgroundColor: "transparent",
-    paddingVertical: Spacing.sm,
-    borderBottomWidth: 1,
-  },
-  certIcon: {
-    width: 40, height: 40, borderRadius: 20,
-    alignItems: "center", justifyContent: "center",
-  },
-  certInfo: { flex: 1, gap: 2 },
-  downloadBtn: {
-    width: 36, height: 36, borderRadius: 18,
-    alignItems: "center", justifyContent: "center",
-  },
-  logoutBtn: {
-    height: 52, borderRadius: BorderRadius.full, borderWidth: 1.5,
-    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
-  },
+  content: { padding: Spacing.lg, gap: Spacing.lg, paddingBottom: Spacing["3xl"] },
+  identity: { flexDirection: "row", alignItems: "center", gap: Spacing.lg },
+  avatar: { width: 72, height: 72, borderRadius: 36, alignItems: "center", justifyContent: "center" },
+  tiles: { flexDirection: "row", flexWrap: "wrap", gap: Spacing.md },
+  tile: { flexGrow: 1, flexBasis: "30%", minWidth: 100, alignItems: "center", gap: 2, padding: Spacing.md, borderRadius: BorderRadius.md, borderWidth: 1 },
+  certHead: { flexDirection: "row", gap: Spacing.md, alignItems: "center" },
+  certActions: { flexDirection: "row", gap: Spacing.sm },
+  menu: { padding: 0 },
+  row: { flexDirection: "row", alignItems: "center", gap: Spacing.md, minHeight: MIN_TOUCH + 8, paddingHorizontal: Spacing.lg },
 });

@@ -1,214 +1,118 @@
-# FastSewa Training™ — Worker Training Platform
+# FastSewa Training
 
-> **Bilingual (Hindi/English) skills & safety training for construction workers** — course library, video/text lessons, quizzes, and auto-issued certificates, built for low-connectivity job sites
+Mobile training for construction crews: short lessons (video or text), quizzes after each module, and a
+verifiable PDF certificate when a course is finished. English and Hindi. Trainers and admins follow
+progress from a web console.
 
-FastSewa Training is the workforce-training arm of the FastSewa platform — a mobile-first learning system for onboarding and upskilling construction, electrical, and site-safety workers. Workers learn in their preferred language, trainers and admins author content and track progress from a lightweight web dashboard.
+| Part | What it is | Where |
+|------|-----------|-------|
+| **Mobile app** | React Native (Expo SDK 54): learn, quizzes, certificates, profile, push notifications, last-seen data offline | `client/src` |
+| **API** | Node 22, Express 5, TypeScript, PostgreSQL (Drizzle) | `server`, `shared` |
+| **Admin console** | React single-page app served by the API at `/admin` (courses, learners, staff, certificates, audit log, broadcasts) | `admin/src` |
+| **Certificate check** | Public page at `/verify/<number>`, reached from the QR code on each certificate | `server/routes/verify.ts` |
 
-[![Status](https://img.shields.io/badge/Status-Launch%20Ready-2e7d32?style=for-the-badge)]()
-[![Stack](https://img.shields.io/badge/Stack-Expo%20%2B%20Node%20%2B%20Postgres-0f172a?style=for-the-badge&logo=react)]()
+New to the project? Read this page, then [DEPLOYMENT.md](DEPLOYMENT.md) to put it live and
+[docs/RUNBOOK.md](docs/RUNBOOK.md) to run it. What was found and fixed in the production-readiness pass is in
+[docs/REMEDIATION.md](docs/REMEDIATION.md); the second audit (release 3.1) and what still needs a decision or an account of yours is in
+[docs/AUDIT-3.1.md](docs/AUDIT-3.1.md).
 
----
+## Run it on your computer
 
-## 🚀 Features
-
-### For Workers
-| Feature | Description |
-|---|---|
-| 📚 Course Library | Browse by category — Safety, Basics, Tools, Electrical, Plumbing, Masonry, Equipment |
-| 🎥 Lessons | Video (YouTube or uploaded), text, and image content — every lesson in **English and Hindi** |
-| ❓ Quizzes | Multiple-choice, auto-scored, with bilingual feedback — a module only counts as complete once its quiz is passed, not just watched |
-| 🏆 Certificates | Auto-issued PDF certificate the moment a course hits 100% completion |
-| 📈 Progress Tracking | Per-lesson, per-module, and per-course completion, visible on the home screen |
-| 🌐 Offline Mode | Course list is cached locally — still browsable with no signal, with a clear "showing saved courses" indicator |
-| 🔔 Push Notifications | Course reminders and admin broadcasts via Expo push |
-| 🔑 Full Account Recovery | Email + code self-service reset, a separate change-password flow for logged-in users, and an admin-issued temporary-password fallback that needs no email at all |
-| 🗣️ Language Toggle | Switch the whole app between Hindi and English anytime from the profile screen |
-
-### For Admins / Trainers
-| Feature | Description |
-|---|---|
-| 🧑‍🏫 Content Authoring | Create courses → modules → lessons → quizzes, each field bilingual, from the admin dashboard |
-| 📊 Dashboard | Total workers, published courses, enrollments, completion rate at a glance |
-| 👷 Worker Management | View every worker's progress, deactivate accounts, reset a worker's password directly |
-| 📣 Broadcast | Push a notification to every registered device |
-| 📈 Analytics | Enrollment counts per course |
-
----
-
-## 📁 Project Structure
-
-```
-fastsewa-training/
-├── client/                        # React Native / Expo mobile app (workers)
-│   ├── App.tsx
-│   └── src/
-│       ├── screens/                # Login, Register, Forgot/Reset/Change-Password,
-│       │                           # Learn (home), CourseDetail, ModuleDetail,
-│       │                           # LessonDetail, Quiz, Search, Tasks, Profile
-│       ├── components/             # ThemedText, ProgressBar, CourseCard...
-│       ├── hooks/                  # useAuth, useTheme, useOfflineSync, usePushNotifications
-│       ├── navigation/             # RootStackNavigator, MainTabNavigator
-│       ├── lib/                    # api.ts — typed API client, token refresh
-│       ├── i18n/                   # Bilingual EN/HI translation strings
-│       └── types/                  # Shared client-side types
-├── server/                         # Express API
-│   ├── index.ts                    # Entry point, security middleware, static uploads
-│   ├── routes.ts                   # Router wiring, rate limiting
-│   ├── db.ts                       # Postgres connection (Neon/any managed provider)
-│   ├── routes/                     # auth, courses, progress, quiz, certificates, admin, upload
-│   ├── services/                   # certificate (PDF), email (SMTP), upload (Cloudinary/S3/local),
-│   │                                # notification (push), progress (completion + cert logic)
-│   ├── middleware/auth.ts
-│   └── utils/params.ts
-├── shared/schema.ts                # Drizzle schema + Zod validation — one source of truth,
-│                                    # imported by both client and server
-├── admin/index.html                # Admin dashboard — single file, no build step
-├── migrations/                     # Drizzle migration history (+ meta/ journal for db:migrate)
-├── scripts/
-│   ├── seed.ts                     # Sample users, courses, quizzes
-│   └── create-admin.ts
-├── docker-compose.yml              # api + redis (local-db is an opt-in profile)
-├── Dockerfile
-├── .github/workflows/              # CI: typecheck → lint → build
-├── DEPLOYMENT.md
-└── .env.example
-```
-
----
-
-## 🛠️ Technologies Used
-
-### Mobile Client
-| Technology | Usage |
-|---|---|
-| **React Native + Expo (SDK 54)** | Cross-platform iOS/Android app |
-| **TypeScript** | End-to-end type safety, shared types with the server |
-| **React Navigation** | Stack + tab navigation |
-| **TanStack Query** | Server-state caching for authenticated screens |
-| **i18next** | Hindi/English translations |
-| **AsyncStorage + NetInfo** | Offline course caching |
-| **Expo Notifications** | Push notifications |
-
-### Backend
-| Technology | Usage |
-|---|---|
-| **Node.js + Express** | REST API |
-| **PostgreSQL** | Primary database — any managed provider (Neon recommended, free tier) |
-| **Drizzle ORM** | Schema, migrations, typed queries |
-| **JWT (access + refresh)** | Auth, with refresh-token rotation and session invalidation on password change |
-| **bcrypt** | Password hashing |
-| **Zod** | Request validation, shared schema with the client |
-| **Redis** *(optional)* | Shared rate-limit store across instances — the app runs fine without it, using an in-memory limiter instead |
-| **Nodemailer (SMTP)** | Password-reset emails — works with any provider (Resend, Brevo, SES...); without it, reset codes log to the server console instead |
-| **Cloudinary / AWS S3** | Video & image storage — falls back to local disk for dev, with a startup warning since local storage isn't durable across redeploys |
-
-### Admin Dashboard
-| Technology | Usage |
-|---|---|
-| **Plain HTML/CSS/JS** | No build step, no framework — one file |
-
-### CI/CD
-- GitHub Actions: type-check (`tsc --noEmit`) → lint (`eslint --max-warnings 0`) → Docker build, in that order
-- Render (recommended) or Docker Compose for self-hosted/VPS deploys
-
----
-
-## ⚙️ Getting Started
-
-### Prerequisites
-- Node.js 20+
-- A Postgres database — a free [Neon](https://neon.tech) project takes about 2 minutes
-- Expo CLI / EAS CLI (`npm install -g eas-cli`) for building the mobile app
-
-### Local Development
+You need Node 22 (20.12 or newer works), npm, and a PostgreSQL database (14 or newer; the tests run on 16).
+A throw-away database in Docker is enough: `docker run -d --name fastsewa-pg -e POSTGRES_PASSWORD=dev -p 5432:5432 postgres:16-alpine`.
 
 ```bash
-# 1. Clone and install
-git clone <your-repo-url> fastsewa-training
-cd fastsewa-training
 npm install
-
-# 2. Environment
 cp .env.example .env
-# fill in: DATABASE_URL (your Neon connection string), JWT_SECRET (any long
-# random string). Everything else — SMTP, Cloudinary/S3, Redis — is optional
-# for local dev and degrades gracefully if left unset.
-
-# 3. Schema + sample data
-npm run db:push
-npm run seed          # sample users/courses, or skip and author real content instead
-
-# 4. Run the server
-npm run dev
-# -> http://localhost:5000/api/health
-
-# 5. Run the mobile app (separate terminal)
-npx expo start
-# -> scan the QR code with Expo Go, or press i / a for a simulator
-
-# 6. Admin dashboard
-# open admin/index.html in a browser — for local dev it points at
-# localhost:5000 by default; see the file's top for the config line
 ```
 
-Create your first admin login:
+Edit `.env` and set the database. In development nothing else is required:
+
+```
+DATABASE_URL=postgresql://postgres:dev@localhost:5432/postgres
+```
+
+Then:
+
 ```bash
-npx tsx scripts/create-admin.ts you@example.com "SomeStrongPassword123"
+npm run db:migrate          # create the tables
+npm run seed                # sample accounts and courses; prints each password ONCE, so copy them
+npm run admin:build         # build the admin console (the API serves it)
+npm run dev                 # API on :5000 and the Expo dev server
 ```
 
----
+* **App:** press `a` / `i` in the Expo terminal, or scan the QR code with Expo Go (push notifications need a development or store build). The app finds the API on your
+  computer by itself (the address Expo shows), so a real phone on the same Wi-Fi works without any setting.
+  Set `EXPO_PUBLIC_API_URL` only if the API runs somewhere else. Restart Expo with `npx expo start --clear` after changing it.
+* **Admin console:** <http://localhost:5000/admin/>. Sign in with the `admin` password the seed printed.
+  `node scripts/build-admin.mjs --watch` rebuilds it as you edit `admin/src`.
+* **Your own admin account** (no seed needed, also how the first admin of a real deployment is made, and how a locked-out admin gets back in):
+  `npm run create-admin -- jane "Jane Roy" --generate` prints a one-time password that must be changed at first sign-in.
+  `npm run create-admin -- --reset jane` issues a new one.
 
-## ✍️ Adding Content
+The sample courses are titled "(Sample)": they only exist to try the app. **Replace them with material your safety
+officer or subject-matter expert has approved before real use.**
 
-All course content is authored from the **admin dashboard** by an admin or trainer account:
+## Commands
 
-1. **Course** — title + description in both English and Hindi, category, difficulty
-2. **Modules** — added inside a course, also bilingual
-3. **Lessons** — added inside a module:
-   - Video: paste a YouTube URL (simplest, free, reliable) or upload a file
-   - Text or image content
-   - Every lesson has English and Hindi fields
-4. **Quiz** *(recommended per module)* — multiple-choice questions, 4 options each, bilingual, with a passing score. **If a module has a quiz, workers must pass it — watching the lessons alone won't mark the module complete.** Modules with no quiz complete on lesson-viewing alone.
-5. **Publish** — a course is invisible to workers until this toggle is switched on
+| Command | What it does |
+|---------|--------------|
+| `npm run dev` | API (with reload) and Expo together |
+| `npm run check:types` | TypeScript for the app, the server and the admin console |
+| `npm run lint` | ESLint, no warnings allowed |
+| `npm test` | All tests; needs `TEST_DATABASE_URL` (below) |
+| `npm run test:unit` | Only the tests that need no database |
+| `npm run build` | Production API bundle (`dist/`) and admin console (`admin/dist/`) |
+| `npm run db:migrate` | Apply pending SQL migrations (`migrations/`) |
+| `npm run db:generate` | After changing `shared/schema.ts`: generate a new migration, then read it before committing |
+| `npm run seed` / `npm run create-admin` | Sample data / accounts, see above |
+| `npm run check:release` | Refuses a mobile release build that still has placeholders ([docs/MOBILE-RELEASE.md](docs/MOBILE-RELEASE.md)) |
 
----
+The tests empty their tables, so they use their own database and refuse any name that does not contain `test`:
 
-## 🚢 Deployment
+```bash
+createdb fastsewa_test
+export TEST_DATABASE_URL=postgresql://postgres:dev@localhost:5432/fastsewa_test
+npm test
+```
 
-Full step-by-step instructions — including the Neon database setup, environment variables, and three deployment paths (Render, Docker Compose, self-hosted) — are in **[`DEPLOYMENT.md`](./DEPLOYMENT.md)**.
+## How learning is tracked (rules that surprise people)
 
-Before onboarding real workers:
-- [ ] `CLOUDINARY_CLOUD_NAME` / `AWS_S3_BUCKET` configured (uploaded videos won't survive a redeploy otherwise)
-- [ ] `SMTP_*` configured, so forgot-password actually emails a code
-- [ ] `eas init` run and a real EAS project ID set in `app.json`, for push notifications to work
+* A **text lesson** can be marked done after the learner has really spent 5 seconds on it. A **video lesson** needs 70 % of the video
+  watched (a clip of a few seconds needs only a second or two); the app reports time every 10 seconds and the server counts only genuine, continuous
+  watching, so skipping to the end does not complete it. Watching at 2x speed may therefore fall short of 70 %.
+* A **quiz** unlocks when the module's lessons are done. The pass mark is set per quiz (70 % unless the admin changes it); a learner can try a quiz 10 times in 24 hours.
+* A **certificate** is issued automatically when every required lesson is done and every quiz is passed. It carries a number and a QR code that opens
+  `/verify/<number>`; an admin can revoke or reinstate it.
+* **Accounts:** learners register themselves (open, with a code from the trainer, or closed; `REGISTRATION_MODE`), or an admin creates the account
+  in the console with a one-time password (valid 72 hours). Trainers can see learners and progress; admins also manage courses, learners, staff,
+  certificates and send broadcasts. Every admin action, and every staff sign-in, is written to the audit log.
+* **Privacy controls built in:** consent and age confirmation at registration, and again whenever `CONSENT_VERSION` changes (or for an account
+  staff created); data export and account deletion from the profile screen, and an admin "erase learner" action. See
+  [docs/DPDP-CHECKLIST.md](docs/DPDP-CHECKLIST.md) for what still needs your legal review.
 
----
+## Repository map
 
-## 👨‍💻 Developer Squad
+```
+client/src/        mobile app: screens/, components/, hooks/, lib/ (api client, offline cache, learning rules), i18n/ (en, hi)
+server/            API: app.ts (middleware and routes), routes/, services/, auth/, middleware/, health.ts, configLoader.ts
+shared/            code used by app, API and console: schema.ts (database), validation.ts, errors.ts, markdown.ts
+admin/src/         admin console (React, built with esbuild into admin/dist)
+migrations/        SQL migrations, applied by `npm run db:migrate` and by the Docker entry point
+scripts/           build-server, build-admin, seed, create-admin, check-release-config, make-brand-assets, ops/ (backup, restore)
+nginx/             reverse-proxy configuration for a Linux host
+docs/              runbook, security notes, DPDP checklist, mobile release guide, remediation report
+.github/           CI (ci.yml), release (deploy.yml), dependabot
+Dockerfile, docker-compose.yml, docker-entrypoint.sh, eas.json, app.json
+```
 
-**
+## Where to go next
 
----
-
-## 🏢 About the Company
-
-**Jha Ji Fastsewa E-Facilities Private Limited**
-- 📍 B Hub, Gandhi Maidan, Patna, Bihar — 800001
-- 📞 +91 82757 23755
-- 📧 fastsewa2020@gmail.com
-- 🌐 [fastsewa.com](https://fastsewa.com)
-
-[![Facebook](https://img.shields.io/badge/Facebook-1877F2?style=flat&logo=facebook&logoColor=white)](https://facebook.com/fastsewa.20)
-[![Instagram](https://img.shields.io/badge/Instagram-E4405F?style=flat&logo=instagram&logoColor=white)](https://www.instagram.com/fastsewa2020/)
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-0077B5?style=flat&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/fastsewa-facilities-2a062b2a2/)
-[![WhatsApp](https://img.shields.io/badge/WhatsApp-25D366?style=flat&logo=whatsapp&logoColor=white)](https://wa.me/918275723755)
-
----
-
-## 📄 License
-
-This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
-
----
-
-**Last Updated**: September 2026
+| I want to... | Read |
+|--------------|------|
+| put it on a server | [DEPLOYMENT.md](DEPLOYMENT.md) |
+| run it, back it up, handle an incident | [docs/RUNBOOK.md](docs/RUNBOOK.md) |
+| know how it is secured | [docs/SECURITY.md](docs/SECURITY.md) |
+| check privacy and legal readiness | [docs/DPDP-CHECKLIST.md](docs/DPDP-CHECKLIST.md) |
+| build and publish the app | [docs/MOBILE-RELEASE.md](docs/MOBILE-RELEASE.md) |
+| see what changed and what is still open | [CHANGELOG.md](CHANGELOG.md), [docs/AUDIT-3.1.md](docs/AUDIT-3.1.md), [docs/REMEDIATION.md](docs/REMEDIATION.md) |

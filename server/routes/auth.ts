@@ -1,407 +1,153 @@
-import { Router, Request, Response } from "express";
-import bcrypt from "bcryptjs";
-import { createHash, randomInt } from "crypto";
-import { db } from "../db";
-import {
-  users,
-  refreshTokens,
-  registerSchema,
-  loginSchema,
-  forgotPasswordSchema,
-  resetPasswordSchema,
-  changePasswordSchema,
-} from "@shared/schema";
+import { Router, type Request } from "express";
 import { eq } from "drizzle-orm";
+import { users } from "@shared/schema";
+import { db } from "../db";
+import { err } from "../errors";
+import { verifyPassword } from "../auth/password";
+import { revokeAllSessions, revokeSessionByToken, rotateSession } from "../auth/sessions";
+import { requireAuth } from "../middleware/auth";
+import { applyLimiter, type Limiters } from "../middleware/rateLimit";
 import {
-  generateTokens,
-  requireAuth,
-  AuthRequest,
-} from "../middleware/auth";
-import jwt from "jsonwebtoken";
-import { sendPasswordResetEmail } from "../services/email";
+  acceptConsent,
+  changePassword,
+  eraseAccount,
+  exportAccount,
+  getAccount,
+  loginWithPassword,
+  registerWorker,
+  requestPasswordReset,
+  resetPasswordWithCode,
+  updateProfile,
+} from "../services/accounts";
+import { audit } from "../services/audit";
+import { registerPushToken, unregisterPushToken } from "../services/notification";
+import { parse } from "../utils/validate";
+import {
+  changePasswordBody,
+  consentBody,
+  deleteAccountBody,
+  forgotPasswordBody,
+  loginBody,
+  logoutBody,
+  pushTokenBody,
+  refreshBody,
+  registerBody,
+  resetPasswordBody,
+  updateProfileBody,
+} from "../validators";
 
-export const authRouter = Router();
+const meta = (req: Request) => ({ userAgent: req.get("user-agent"), ip: req.ip ?? null, requestId: req.id });
 
-const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-in-production";
+export function authRoutes(l: Limiters): Router {
+  const r = Router();
 
-function hashToken(token: string) {
-  return createHash("sha256").update(token).digest("hex");
-}
-
-// Unambiguous charset — no 0/O, 1/I/L — so a code is easy to read back off
-// an email and type correctly.
-const CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
-function generateResetCode(length = 8): string {
-  let code = "";
-  for (let i = 0; i < length; i++) code += CODE_CHARS[randomInt(CODE_CHARS.length)];
-  return code;
-}
-
-// POST /api/v1/auth/register
-authRouter.post("/register", async (req: Request, res: Response) => {
-  const result = registerSchema.safeParse(req.body);
-  if (!result.success) {
-    return res.status(400).json({ error: result.error.flatten() });
-  }
-
-  const { username, password, displayName, email, phoneNumber, preferredLang } =
-    result.data;
-
-  const existing = await db
-    .select({ id: users.id })
-    .from(users)
-    .where(eq(users.username, username))
-    .limit(1);
-
-  if (existing.length > 0) {
-    return res.status(409).json({ error: "Username already taken" });
-  }
-
-  if (email) {
-    const existingEmail = await db
-      .select({ id: users.id })
-      .from(users)
-      .where(eq(users.email, email))
-      .limit(1);
-    if (existingEmail.length > 0) {
-      return res.status(409).json({ error: "Email already in use" });
-    }
-  }
-
-  const passwordHash = await bcrypt.hash(password, 12);
-
-  const [user] = await db
-    .insert(users)
-    .values({
-      username,
-      passwordHash,
-      displayName,
-      email,
-      phoneNumber,
-      preferredLang: preferredLang || "en",
-      role: "worker",
-    })
-    .returning({
-      id: users.id,
-      username: users.username,
-      displayName: users.displayName,
-      role: users.role,
-      preferredLang: users.preferredLang,
-      email: users.email,
-    });
-
-  const { accessToken, refreshToken } = generateTokens(user.id, user.role);
-
-  await db.insert(refreshTokens).values({
-    userId: user.id,
-    tokenHash: hashToken(refreshToken),
-    expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+  // ─── anonymous ─────────────────────────────────────────────────────────────
+  r.post("/register", l.anonymous, l.register, async (req, res) => {
+    const body = parse(registerBody, req.body);
+    res.status(201).json(await registerWorker(body, meta(req)));
   });
 
-  res.status(201).json({ user, accessToken, refreshToken });
-});
-
-// POST /api/v1/auth/login
-authRouter.post("/login", async (req: Request, res: Response) => {
-  const result = loginSchema.safeParse(req.body);
-  if (!result.success) {
-    return res.status(400).json({ error: "Invalid request format" });
-  }
-
-  const { username, password } = result.data;
-
-  const [user] = await db
-    .select()
-    .from(users)
-    .where(eq(users.username, username))
-    .limit(1);
-
-  // Timing-safe: always run bcrypt even if user not found (prevents enumeration)
-  const hashToCheck =
-    user?.passwordHash || "$2b$12$invalidhashfortimingsafetyXXXXXXXXXXXXXX";
-  const valid = await bcrypt.compare(password, hashToCheck);
-
-  if (!user || !valid || !user.isActive) {
-    return res.status(401).json({ error: "Invalid username or password" });
-  }
-
-  await db
-    .update(users)
-    .set({ lastLoginAt: new Date() })
-    .where(eq(users.id, user.id));
-
-  const { accessToken, refreshToken } = generateTokens(user.id, user.role);
-
-  await db.insert(refreshTokens).values({
-    userId: user.id,
-    tokenHash: hashToken(refreshToken),
-    expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+  r.post("/login", l.anonymous, l.loginByIp, l.loginByUser, async (req, res) => {
+    const body = parse(loginBody, req.body);
+    res.json(await loginWithPassword(body, meta(req)));
   });
 
-  res.json({
-    user: {
-      id: user.id,
-      username: user.username,
-      displayName: user.displayName,
-      role: user.role,
-      preferredLang: user.preferredLang,
-      avatarUrl: user.avatarUrl,
-    },
-    accessToken,
-    refreshToken,
-  });
-});
-
-// POST /api/v1/auth/refresh
-authRouter.post("/refresh", async (req: Request, res: Response) => {
-  const { refreshToken } = req.body;
-  if (!refreshToken) {
-    return res.status(400).json({ error: "Refresh token required" });
-  }
-
-  try {
-    const payload = jwt.verify(refreshToken, JWT_SECRET) as {
-      sub: string;
-      type: string;
-    };
-
-    if (payload.type !== "refresh") {
-      return res.status(401).json({ error: "Invalid token type" });
-    }
-
-    const [stored] = await db
-      .select()
-      .from(refreshTokens)
-      .where(eq(refreshTokens.tokenHash, hashToken(refreshToken)))
-      .limit(1);
-
-    if (!stored || stored.expiresAt < new Date()) {
-      return res.status(401).json({ error: "Refresh token expired or invalid" });
-    }
-
-    const [user] = await db
-      .select({ id: users.id, role: users.role, isActive: users.isActive })
-      .from(users)
-      .where(eq(users.id, payload.sub))
-      .limit(1);
-
-    if (!user || !user.isActive) {
-      return res.status(401).json({ error: "User not found" });
-    }
-
-    // Rotate: delete old, issue new
-    await db
-      .delete(refreshTokens)
-      .where(eq(refreshTokens.id, stored.id));
-
-    const tokens = generateTokens(user.id, user.role);
-
-    await db.insert(refreshTokens).values({
-      userId: user.id,
-      tokenHash: hashToken(tokens.refreshToken),
-      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-    });
-
+  // Only its own budget: a site's phones all refresh at shift start, and the general anonymous budget
+  // (sized for sign-in screens) used to refuse the 241st phone behind one address within a minute.
+  r.post("/refresh", l.refresh, async (req, res) => {
+    const body = parse(refreshBody, req.body);
+    const { tokens } = await rotateSession(body.refreshToken, meta(req));
     res.json(tokens);
-  } catch {
-    res.status(401).json({ error: "Invalid refresh token" });
-  }
-});
+  });
 
-// POST /api/v1/auth/logout
-authRouter.post("/logout", requireAuth, async (req: AuthRequest, res: Response) => {
-  const { refreshToken } = req.body;
-  if (refreshToken) {
-    await db
-      .delete(refreshTokens)
-      .where(eq(refreshTokens.tokenHash, hashToken(refreshToken)));
-  }
-  res.json({ message: "Logged out successfully" });
-});
+  /**
+   * Works without a valid access token on purpose: a client whose access token
+   * has expired must still be able to end its session. Possession of the
+   * refresh token is the credential. Always answers 200 (idempotent).
+   */
+  r.post("/logout", l.anonymous, async (req, res) => {
+    const body = parse(logoutBody, req.body ?? {});
+    await revokeSessionByToken(body.refreshToken);
+    res.json({ message: "Logged out" });
+  });
 
-// GET /api/v1/auth/me
-authRouter.get("/me", requireAuth, async (req: AuthRequest, res: Response) => {
-  const [user] = await db
-    .select({
-      id: users.id,
-      username: users.username,
-      displayName: users.displayName,
-      role: users.role,
-      preferredLang: users.preferredLang,
-      avatarUrl: users.avatarUrl,
-      phoneNumber: users.phoneNumber,
-      email: users.email,
-      createdAt: users.createdAt,
-    })
-    .from(users)
-    .where(eq(users.id, req.user!.id))
-    .limit(1);
+  r.post("/forgot-password", l.anonymous, l.forgotByIp, l.forgotByEmail, async (req, res) => {
+    const body = parse(forgotPasswordBody, req.body);
+    await requestPasswordReset(body.email);
+    // Identical answer whether or not the address is registered.
+    res.json({ message: "If that email is registered, a reset code has been sent." });
+  });
 
-  if (!user) return res.status(404).json({ error: "User not found" });
-  res.json(user);
-});
+  r.post("/reset-password", l.anonymous, l.resetByIp, async (req, res) => {
+    const body = parse(resetPasswordBody, req.body);
+    await resetPasswordWithCode(body);
+    res.json({ message: "Password reset successful. Please log in again." });
+  });
 
-// PATCH /api/v1/auth/me - update profile
-authRouter.patch("/me", requireAuth, async (req: AuthRequest, res: Response) => {
-  const { displayName, preferredLang, phoneNumber, email, expoPushToken } = req.body;
+  // ─── signed in ─────────────────────────────────────────────────────────────
+  r.use(requireAuth, l.authenticated);
 
-  const updates: Partial<typeof users.$inferInsert> = {};
-  if (displayName) updates.displayName = String(displayName).slice(0, 60);
-  if (preferredLang && ["en", "hi"].includes(preferredLang))
-    updates.preferredLang = preferredLang;
-  if (phoneNumber) updates.phoneNumber = String(phoneNumber);
-  if (expoPushToken) updates.expoPushToken = String(expoPushToken);
-  if (email) {
-    const emailStr = String(email).trim().toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailStr)) {
-      return res.status(400).json({ error: "Invalid email address" });
-    }
-    const existingEmail = await db
-      .select({ id: users.id })
-      .from(users)
-      .where(eq(users.email, emailStr))
-      .limit(1);
-    if (existingEmail.length > 0 && existingEmail[0].id !== req.user!.id) {
-      return res.status(409).json({ error: "Email already in use" });
-    }
-    updates.email = emailStr;
-  }
-  updates.updatedAt = new Date();
+  r.get("/me", async (req, res) => {
+    res.json(await getAccount(req.user!.id));
+  });
 
-  const [updated] = await db
-    .update(users)
-    .set(updates)
-    .where(eq(users.id, req.user!.id))
-    .returning({
-      id: users.id,
-      displayName: users.displayName,
-      preferredLang: users.preferredLang,
-      phoneNumber: users.phoneNumber,
-      email: users.email,
-    });
+  r.patch("/me", async (req, res) => {
+    const body = parse(updateProfileBody, req.body);
+    // A request that carries the password is a password check: the same small budget as changing it.
+    if (body.currentPassword !== undefined) await applyLimiter(l.sensitiveAccount, req, res);
+    res.json(await updateProfile(req.user!.id, body));
+  });
 
-  res.json(updated);
-});
+  /** The learner accepts the privacy notice and terms the deployment currently shows (CONSENT_VERSION). */
+  r.post("/consent", async (req, res) => {
+    const body = parse(consentBody, req.body);
+    res.json(await acceptConsent(req.user!.id, body, { ip: req.ip ?? null, requestId: req.id }));
+  });
 
-// POST /api/v1/auth/forgot-password
-authRouter.post("/forgot-password", async (req: Request, res: Response) => {
-  const result = forgotPasswordSchema.safeParse(req.body);
-  if (!result.success) {
-    return res.status(400).json({ error: result.error.flatten() });
-  }
-  const { email } = result.data;
+  r.post("/change-password", l.sensitiveAccount, async (req, res) => {
+    const body = parse(changePasswordBody, req.body);
+    // Every other device is signed out; this one receives a fresh session so the user is not kicked out.
+    res.json(await changePassword(req.user!.id, body, meta(req)));
+  });
 
-  const [user] = await db
-    .select({ id: users.id, displayName: users.displayName })
-    .from(users)
-    .where(eq(users.email, email))
-    .limit(1);
+  r.post("/logout-all", async (req, res) => {
+    await revokeAllSessions(req.user!.id);
+    res.json({ message: "Signed out on all devices" });
+  });
 
-  // Same response whether or not the email is on file, so this endpoint
-  // can't be used to enumerate registered accounts.
-  if (user) {
-    const code = generateResetCode();
-    await db
-      .update(users)
-      .set({
-        passwordResetTokenHash: hashToken(code),
-        passwordResetExpiresAt: new Date(Date.now() + 30 * 60 * 1000),
-      })
-      .where(eq(users.id, user.id));
+  r.post("/push-token", async (req, res) => {
+    const body = parse(pushTokenBody, req.body);
+    await registerPushToken(req.user!.id, body.token, body.platform);
+    res.json({ message: "Registered" });
+  });
 
-    try {
-      await sendPasswordResetEmail(email, code, user.displayName);
-    } catch (err) {
-      console.error("[Email] Failed to send reset email:", err);
-    }
-  }
+  r.delete("/push-token", async (req, res) => {
+    const body = parse(pushTokenBody.pick({ token: true }), { token: req.body?.token ?? req.query.token });
+    await unregisterPushToken(req.user!.id, body.token);
+    res.json({ message: "Removed" });
+  });
 
-  res.json({ message: "If that email is registered, a reset code has been sent." });
-});
+  /** DPDP: right of access — everything the app holds about the signed-in person. */
+  r.get("/me/export", l.sensitiveAccount, async (req, res) => {
+    const data = await exportAccount(req.user!.id);
+    res.set("Content-Disposition", 'attachment; filename="fastsewa-my-data.json"');
+    res.json(data);
+  });
 
-// POST /api/v1/auth/reset-password
-authRouter.post("/reset-password", async (req: Request, res: Response) => {
-  const result = resetPasswordSchema.safeParse(req.body);
-  if (!result.success) {
-    return res.status(400).json({ error: result.error.flatten() });
-  }
-  const { email, code, newPassword } = result.data;
+  /** DPDP: right to erasure. Requires the password so a stolen unlocked phone cannot wipe an account. */
+  r.delete("/me", l.sensitiveAccount, async (req, res) => {
+    const body = parse(deleteAccountBody, req.body);
+    const [row] = await db.select({ hash: users.passwordHash }).from(users).where(eq(users.id, req.user!.id)).limit(1);
+    if (!row) throw err("UNAUTHORIZED");
+    const { valid } = await verifyPassword(body.password, row.hash);
+    if (!valid) throw err("CURRENT_PASSWORD_INCORRECT");
 
-  const [user] = await db
-    .select({
-      id: users.id,
-      passwordResetTokenHash: users.passwordResetTokenHash,
-      passwordResetExpiresAt: users.passwordResetExpiresAt,
-    })
-    .from(users)
-    .where(eq(users.email, email))
-    .limit(1);
+    const userId = req.user!.id;
+    await eraseAccount(userId);
+    // No username in the entry: the person asked to be forgotten.
+    await audit(null, "account.erased", { type: "user", id: userId }, { by: "self" });
+    res.json({ message: "Your account and learning records have been deleted." });
+  });
 
-  const isValid =
-    !!user &&
-    !!user.passwordResetTokenHash &&
-    user.passwordResetTokenHash === hashToken(code) &&
-    !!user.passwordResetExpiresAt &&
-    user.passwordResetExpiresAt > new Date();
-
-  if (!isValid) {
-    return res.status(400).json({ error: "Invalid or expired reset code" });
-  }
-
-  const passwordHash = await bcrypt.hash(newPassword, 12);
-  await db
-    .update(users)
-    .set({
-      passwordHash,
-      passwordResetTokenHash: null,
-      passwordResetExpiresAt: null,
-      updatedAt: new Date(),
-    })
-    .where(eq(users.id, user!.id));
-
-  // Reset = "I might not trust my old sessions" -> sign out everywhere.
-  await db.delete(refreshTokens).where(eq(refreshTokens.userId, user!.id));
-
-  res.json({ message: "Password reset successful. Please log in again." });
-});
-
-// POST /api/v1/auth/change-password — for a logged-in user who knows their
-// current password (distinct from forgot/reset-password, which is for when
-// they don't).
-authRouter.post(
-  "/change-password",
-  requireAuth,
-  async (req: AuthRequest, res: Response) => {
-    const result = changePasswordSchema.safeParse(req.body);
-    if (!result.success) {
-      return res.status(400).json({ error: result.error.flatten() });
-    }
-    const { currentPassword, newPassword } = result.data;
-
-    const [user] = await db
-      .select({ id: users.id, passwordHash: users.passwordHash })
-      .from(users)
-      .where(eq(users.id, req.user!.id))
-      .limit(1);
-
-    if (!user) return res.status(404).json({ error: "User not found" });
-
-    const valid = await bcrypt.compare(currentPassword, user.passwordHash);
-    if (!valid) {
-      return res.status(401).json({ error: "Current password is incorrect" });
-    }
-
-    const passwordHash = await bcrypt.hash(newPassword, 12);
-    await db
-      .update(users)
-      .set({ passwordHash, updatedAt: new Date() })
-      .where(eq(users.id, user.id));
-
-    // Same policy as reset-password: sign out everywhere, current session
-    // included, so there's one consistent "you changed your password" story
-    // rather than a quietly-still-valid access token elsewhere.
-    await db.delete(refreshTokens).where(eq(refreshTokens.userId, user.id));
-
-    res.json({ message: "Password changed. Please log in again." });
-  }
-);
+  return r;
+}

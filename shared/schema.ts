@@ -1,3 +1,16 @@
+/**
+ * Database schema (drizzle-orm / PostgreSQL). Server-only: the mobile app never
+ * imports this file (it shares `validation.ts` and `errors.ts` instead).
+ *
+ * Conventions
+ *  - every timestamp is `timestamptz` (the old `timestamp without time zone`
+ *    columns silently shifted by the server's UTC offset);
+ *  - usernames and e-mail addresses are stored lower-case (CHECK constraints
+ *    enforce it) so "Ramesh" and "ramesh" can never be two different accounts;
+ *  - business invariants that used to live only in application code
+ *    (one certificate per user and course, one quiz per module, score ranges)
+ *    are also enforced by the database.
+ */
 import { sql, relations } from "drizzle-orm";
 import {
   pgTable,
@@ -11,41 +24,33 @@ import {
   real,
   index,
   uniqueIndex,
+  check,
 } from "drizzle-orm/pg-core";
-import { z } from "zod";
+import { CATEGORIES, CONTENT_TYPES, DIFFICULTIES, LANGS, ROLES } from "./constants";
+
+const ts = (name: string) => timestamp(name, { withTimezone: true });
+const createdAt = () => ts("created_at").notNull().default(sql`now()`);
+const pk = () =>
+  varchar("id", { length: 36 })
+    .primaryKey()
+    .default(sql`gen_random_uuid()`);
 
 // ─── Enums ────────────────────────────────────────────────────────────────────
-export const roleEnum = pgEnum("role", ["admin", "trainer", "worker"]);
-export const categoryEnum = pgEnum("category", [
-  "safety",
-  "basics",
-  "tools",
-  "discipline",
-  "electrical",
-  "plumbing",
-  "masonry",
-  "equipment",
-]);
-export const difficultyEnum = pgEnum("difficulty", [
-  "beginner",
-  "intermediate",
-  "advanced",
-]);
-export const contentTypeEnum = pgEnum("content_type", [
-  "video",
-  "text",
-  "image",
-  "quiz",
-]);
-export const langEnum = pgEnum("lang", ["en", "hi"]);
+// The value lists live in ./constants (no database code there) so the mobile app and the admin
+// console can use them without bundling drizzle-orm.
+export const roleEnum = pgEnum("role", ROLES);
+export const categoryEnum = pgEnum("category", CATEGORIES);
+export const difficultyEnum = pgEnum("difficulty", DIFFICULTIES);
+export const contentTypeEnum = pgEnum("content_type", CONTENT_TYPES);
+export const langEnum = pgEnum("lang", LANGS);
+
+export { CATEGORIES, CONTENT_TYPES, DIFFICULTIES, LANGS, ROLES };
 
 // ─── Users ────────────────────────────────────────────────────────────────────
 export const users = pgTable(
   "users",
   {
-    id: varchar("id", { length: 36 })
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: pk(),
     username: text("username").notNull().unique(),
     email: text("email").unique(),
     passwordHash: text("password_hash").notNull(),
@@ -54,27 +59,42 @@ export const users = pgTable(
     avatarUrl: text("avatar_url"),
     phoneNumber: text("phone_number"),
     preferredLang: langEnum("preferred_lang").notNull().default("en"),
+    /** @deprecated superseded by `push_devices`; kept one release for rollback, then dropped. */
     expoPushToken: text("expo_push_token"),
     isActive: boolean("is_active").notNull().default(true),
+    /** Set after an admin-issued temporary password; blocks the API until the user picks their own. */
+    mustChangePassword: boolean("must_change_password").notNull().default(false),
+    /**
+     * When the admin-issued one-time password stops working (null: no one-time password, or one issued
+     * before expiry existed). Cleared as soon as the person chooses their own password.
+     */
+    tempPasswordExpiresAt: ts("temp_password_expires_at"),
+    /** Bumped on password change/reset, deactivation, role change: invalidates every access token at once. */
+    tokenVersion: integer("token_version").notNull().default(0),
     passwordResetTokenHash: text("password_reset_token_hash"),
-    passwordResetExpiresAt: timestamp("password_reset_expires_at"),
-    createdAt: timestamp("created_at").notNull().default(sql`now()`),
-    updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
-    lastLoginAt: timestamp("last_login_at"),
+    passwordResetExpiresAt: ts("password_reset_expires_at"),
+    passwordResetAttempts: integer("password_reset_attempts").notNull().default(0),
+    /** DPDP: which privacy-policy version the user accepted, and when. */
+    consentVersion: text("consent_version"),
+    consentAcceptedAt: ts("consent_accepted_at"),
+    /** Set when the account was erased/anonymised (the row is kept so audit logs stay consistent). */
+    deletedAt: ts("deleted_at"),
+    createdAt: createdAt(),
+    updatedAt: ts("updated_at").notNull().default(sql`now()`),
+    lastLoginAt: ts("last_login_at"),
   },
-  (t) => ({
-    usernameIdx: index("users_username_idx").on(t.username),
-    emailIdx: index("users_email_idx").on(t.email),
-  })
+  (t) => [
+    index("users_role_active_idx").on(t.role, t.isActive),
+    check("users_username_lowercase_chk", sql`${t.username} = lower(${t.username})`),
+    check("users_email_lowercase_chk", sql`${t.email} IS NULL OR ${t.email} = lower(${t.email})`),
+  ]
 );
 
 // ─── Courses ──────────────────────────────────────────────────────────────────
 export const courses = pgTable(
   "courses",
   {
-    id: varchar("id", { length: 36 })
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: pk(),
     slug: text("slug").notNull().unique(),
     title: text("title").notNull(),
     titleHi: text("title_hi"),
@@ -85,26 +105,25 @@ export const courses = pgTable(
     thumbnailUrl: text("thumbnail_url"),
     durationMinutes: integer("duration_minutes").notNull().default(0),
     isPublished: boolean("is_published").notNull().default(false),
+    /** Archived courses disappear for learners but keep their history and certificates. */
+    archivedAt: ts("archived_at"),
     sortOrder: integer("sort_order").notNull().default(0),
-    createdBy: varchar("created_by", { length: 36 }).references(
-      () => users.id
-    ),
-    createdAt: timestamp("created_at").notNull().default(sql`now()`),
-    updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
+    createdBy: varchar("created_by", { length: 36 }).references(() => users.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+    updatedAt: ts("updated_at").notNull().default(sql`now()`),
   },
-  (t) => ({
-    categoryIdx: index("courses_category_idx").on(t.category),
-    publishedIdx: index("courses_published_idx").on(t.isPublished),
-  })
+  (t) => [
+    index("courses_listing_idx").on(t.isPublished, t.sortOrder),
+    index("courses_category_idx").on(t.category),
+    check("courses_duration_chk", sql`${t.durationMinutes} >= 0`),
+  ]
 );
 
 // ─── Modules ──────────────────────────────────────────────────────────────────
 export const modules = pgTable(
   "modules",
   {
-    id: varchar("id", { length: 36 })
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: pk(),
     courseId: varchar("course_id", { length: 36 })
       .notNull()
       .references(() => courses.id, { onDelete: "cascade" }),
@@ -113,20 +132,16 @@ export const modules = pgTable(
     description: text("description"),
     descriptionHi: text("description_hi"),
     sortOrder: integer("sort_order").notNull().default(0),
-    createdAt: timestamp("created_at").notNull().default(sql`now()`),
+    createdAt: createdAt(),
   },
-  (t) => ({
-    courseIdx: index("modules_course_idx").on(t.courseId),
-  })
+  (t) => [index("modules_course_idx").on(t.courseId, t.sortOrder)]
 );
 
 // ─── Lessons ──────────────────────────────────────────────────────────────────
 export const lessons = pgTable(
   "lessons",
   {
-    id: varchar("id", { length: 36 })
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: pk(),
     moduleId: varchar("module_id", { length: 36 })
       .notNull()
       .references(() => modules.id, { onDelete: "cascade" }),
@@ -134,57 +149,67 @@ export const lessons = pgTable(
     titleHi: text("title_hi"),
     contentType: contentTypeEnum("content_type").notNull(),
     videoUrl: text("video_url"),
-    videoProvider: text("video_provider"), // "youtube" | "cloudinary" | "s3" | "local"
+    /** "youtube" | "cloudinary" | "s3" | "local" | "external" — derived server-side from the URL. */
+    videoProvider: text("video_provider"),
     videoDurationSeconds: integer("video_duration_seconds"),
     content: text("content"), // Markdown
     contentHi: text("content_hi"),
     imageUrl: text("image_url"),
     sortOrder: integer("sort_order").notNull().default(0),
     isRequired: boolean("is_required").notNull().default(true),
-    createdAt: timestamp("created_at").notNull().default(sql`now()`),
+    createdAt: createdAt(),
   },
-  (t) => ({
-    moduleIdx: index("lessons_module_idx").on(t.moduleId),
-  })
+  (t) => [
+    index("lessons_module_idx").on(t.moduleId, t.sortOrder),
+    check("lessons_duration_chk", sql`${t.videoDurationSeconds} IS NULL OR ${t.videoDurationSeconds} > 0`),
+  ]
 );
 
 // ─── Quizzes ──────────────────────────────────────────────────────────────────
-export const quizzes = pgTable("quizzes", {
-  id: varchar("id", { length: 36 })
-    .primaryKey()
-    .default(sql`gen_random_uuid()`),
-  moduleId: varchar("module_id", { length: 36 })
-    .notNull()
-    .references(() => modules.id, { onDelete: "cascade" }),
-  title: text("title").notNull(),
-  passingScore: integer("passing_score").notNull().default(70),
-  createdAt: timestamp("created_at").notNull().default(sql`now()`),
-});
+export const quizzes = pgTable(
+  "quizzes",
+  {
+    id: pk(),
+    moduleId: varchar("module_id", { length: 36 })
+      .notNull()
+      .references(() => modules.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    passingScore: integer("passing_score").notNull().default(70),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("quizzes_module_key").on(t.moduleId),
+    check("quizzes_passing_score_chk", sql`${t.passingScore} BETWEEN 1 AND 100`),
+  ]
+);
 
-export const quizQuestions = pgTable("quiz_questions", {
-  id: varchar("id", { length: 36 })
-    .primaryKey()
-    .default(sql`gen_random_uuid()`),
-  quizId: varchar("quiz_id", { length: 36 })
-    .notNull()
-    .references(() => quizzes.id, { onDelete: "cascade" }),
-  question: text("question").notNull(),
-  questionHi: text("question_hi"),
-  options: jsonb("options").notNull().$type<string[]>(),
-  optionsHi: jsonb("options_hi").$type<string[]>(),
-  correctIndex: integer("correct_index").notNull(),
-  explanation: text("explanation"),
-  explanationHi: text("explanation_hi"),
-  sortOrder: integer("sort_order").notNull().default(0),
-});
+export const quizQuestions = pgTable(
+  "quiz_questions",
+  {
+    id: pk(),
+    quizId: varchar("quiz_id", { length: 36 })
+      .notNull()
+      .references(() => quizzes.id, { onDelete: "cascade" }),
+    question: text("question").notNull(),
+    questionHi: text("question_hi"),
+    options: jsonb("options").notNull().$type<string[]>(),
+    optionsHi: jsonb("options_hi").$type<string[]>(),
+    correctIndex: integer("correct_index").notNull(),
+    explanation: text("explanation"),
+    explanationHi: text("explanation_hi"),
+    sortOrder: integer("sort_order").notNull().default(0),
+  },
+  (t) => [
+    index("quiz_questions_quiz_idx").on(t.quizId, t.sortOrder),
+    check("quiz_questions_correct_idx_chk", sql`${t.correctIndex} >= 0`),
+  ]
+);
 
-// ─── Progress Tracking ────────────────────────────────────────────────────────
+// ─── Progress tracking ────────────────────────────────────────────────────────
 export const lessonProgress = pgTable(
   "lesson_progress",
   {
-    id: varchar("id", { length: 36 })
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: pk(),
     userId: varchar("user_id", { length: 36 })
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
@@ -192,78 +217,71 @@ export const lessonProgress = pgTable(
       .notNull()
       .references(() => lessons.id, { onDelete: "cascade" }),
     completed: boolean("completed").notNull().default(false),
-    videoProgressSeconds: integer("video_progress_seconds")
-      .notNull()
-      .default(0),
-    completedAt: timestamp("completed_at"),
-    createdAt: timestamp("created_at").notNull().default(sql`now()`),
-    updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
+    /** Resume position. Never moves a completed lesson back to "not completed". */
+    videoProgressSeconds: integer("video_progress_seconds").notNull().default(0),
+    /** Seconds actually spent on the lesson, accumulated from server-timed heartbeats (anti-skip). */
+    watchedSeconds: integer("watched_seconds").notNull().default(0),
+    lastHeartbeatAt: ts("last_heartbeat_at"),
+    completedAt: ts("completed_at"),
+    createdAt: createdAt(),
+    updatedAt: ts("updated_at").notNull().default(sql`now()`),
   },
-  (t) => ({
-    userLessonIdx: uniqueIndex("lesson_progress_user_lesson_idx").on(
-      t.userId,
-      t.lessonId
-    ),
-    userIdx: index("lesson_progress_user_idx").on(t.userId),
-  })
+  (t) => [
+    uniqueIndex("lesson_progress_user_lesson_idx").on(t.userId, t.lessonId),
+    index("lesson_progress_lesson_idx").on(t.lessonId),
+    // "active learners in the last 7 days" on the dashboard
+    index("lesson_progress_updated_idx").on(t.updatedAt),
+    check("lesson_progress_nonneg_chk", sql`${t.videoProgressSeconds} >= 0 AND ${t.watchedSeconds} >= 0`),
+  ]
 );
 
 export const moduleProgress = pgTable(
   "module_progress",
   {
-    id: varchar("id", { length: 36 })
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: pk(),
     userId: varchar("user_id", { length: 36 })
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     moduleId: varchar("module_id", { length: 36 })
       .notNull()
       .references(() => modules.id, { onDelete: "cascade" }),
-    startedAt: timestamp("started_at").notNull().default(sql`now()`),
-    completedAt: timestamp("completed_at"),
+    startedAt: ts("started_at").notNull().default(sql`now()`),
+    completedAt: ts("completed_at"),
     quizScore: integer("quiz_score"),
     quizPassed: boolean("quiz_passed"),
   },
-  (t) => ({
-    userModuleIdx: uniqueIndex("module_progress_user_module_idx").on(
-      t.userId,
-      t.moduleId
-    ),
-  })
+  (t) => [
+    uniqueIndex("module_progress_user_module_idx").on(t.userId, t.moduleId),
+    index("module_progress_module_idx").on(t.moduleId),
+  ]
 );
 
 export const courseEnrollments = pgTable(
   "course_enrollments",
   {
-    id: varchar("id", { length: 36 })
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: pk(),
     userId: varchar("user_id", { length: 36 })
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     courseId: varchar("course_id", { length: 36 })
       .notNull()
       .references(() => courses.id, { onDelete: "cascade" }),
-    enrolledAt: timestamp("enrolled_at").notNull().default(sql`now()`),
-    completedAt: timestamp("completed_at"),
+    enrolledAt: ts("enrolled_at").notNull().default(sql`now()`),
+    completedAt: ts("completed_at"),
     completionPercent: real("completion_percent").notNull().default(0),
   },
-  (t) => ({
-    userCourseIdx: uniqueIndex("enrollment_user_course_idx").on(
-      t.userId,
-      t.courseId
-    ),
-  })
+  (t) => [
+    uniqueIndex("enrollment_user_course_idx").on(t.userId, t.courseId),
+    index("enrollment_course_idx").on(t.courseId),
+    check("enrollment_percent_chk", sql`${t.completionPercent} BETWEEN 0 AND 100`),
+  ]
 );
 
 // ─── Certificates ─────────────────────────────────────────────────────────────
 export const certificates = pgTable(
   "certificates",
   {
-    id: varchar("id", { length: 36 })
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: pk(),
     userId: varchar("user_id", { length: 36 })
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
@@ -271,48 +289,139 @@ export const certificates = pgTable(
       .notNull()
       .references(() => courses.id, { onDelete: "cascade" }),
     certificateNumber: text("certificate_number").notNull().unique(),
-    earnedAt: timestamp("earned_at").notNull().default(sql`now()`),
+    /** Name and course title as they were on the day of issue — later renames must not rewrite history. */
+    issuedName: text("issued_name"),
+    issuedCourseTitle: text("issued_course_title"),
+    earnedAt: ts("earned_at").notNull().default(sql`now()`),
+    revokedAt: ts("revoked_at"),
+    revokedReason: text("revoked_reason"),
     pdfUrl: text("pdf_url"),
   },
-  (t) => ({
-    userIdx: index("certificates_user_idx").on(t.userId),
-  })
+  (t) => [
+    uniqueIndex("certificates_user_course_key").on(t.userId, t.courseId),
+    index("certificates_user_idx").on(t.userId),
+  ]
 );
 
-// ─── Quiz Attempts ────────────────────────────────────────────────────────────
-export const quizAttempts = pgTable("quiz_attempts", {
-  id: varchar("id", { length: 36 })
-    .primaryKey()
-    .default(sql`gen_random_uuid()`),
-  userId: varchar("user_id", { length: 36 })
-    .notNull()
-    .references(() => users.id),
-  quizId: varchar("quiz_id", { length: 36 })
-    .notNull()
-    .references(() => quizzes.id),
-  answers: jsonb("answers").notNull().$type<number[]>(),
-  score: integer("score").notNull(),
-  passed: boolean("passed").notNull(),
-  attemptedAt: timestamp("attempted_at").notNull().default(sql`now()`),
-});
-
-// ─── Refresh Tokens ───────────────────────────────────────────────────────────
-export const refreshTokens = pgTable(
-  "refresh_tokens",
+// ─── Quiz attempts ────────────────────────────────────────────────────────────
+export const quizAttempts = pgTable(
+  "quiz_attempts",
   {
-    id: varchar("id", { length: 36 })
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: pk(),
     userId: varchar("user_id", { length: 36 })
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    tokenHash: text("token_hash").notNull(),
-    expiresAt: timestamp("expires_at").notNull(),
-    createdAt: timestamp("created_at").notNull().default(sql`now()`),
+    quizId: varchar("quiz_id", { length: 36 })
+      .notNull()
+      .references(() => quizzes.id, { onDelete: "cascade" }),
+    answers: jsonb("answers").notNull().$type<number[]>(),
+    score: integer("score").notNull(),
+    passed: boolean("passed").notNull(),
+    attemptedAt: ts("attempted_at").notNull().default(sql`now()`),
   },
-  (t) => ({
-    tokenIdx: index("refresh_tokens_hash_idx").on(t.tokenHash),
-  })
+  (t) => [
+    index("quiz_attempts_user_quiz_idx").on(t.userId, t.quizId, t.attemptedAt),
+    check("quiz_attempts_score_chk", sql`${t.score} BETWEEN 0 AND 100`),
+  ]
+);
+
+// ─── Sessions (refresh tokens) ────────────────────────────────────────────────
+/**
+ * Refresh tokens are opaque random strings; only their SHA-256 is stored.
+ * Each login starts a "family"; every refresh rotates the token inside the
+ * family. Presenting an already-rotated token (outside a short network-retry
+ * grace window) revokes the whole family — the signature of a stolen token.
+ */
+export const refreshTokens = pgTable(
+  "refresh_tokens",
+  {
+    id: pk(),
+    userId: varchar("user_id", { length: 36 })
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull().unique(),
+    familyId: varchar("family_id", { length: 36 })
+      .notNull()
+      .default(sql`gen_random_uuid()`),
+    sessionStartedAt: ts("session_started_at").notNull().default(sql`now()`),
+    expiresAt: ts("expires_at").notNull(),
+    createdAt: createdAt(),
+    lastUsedAt: ts("last_used_at"),
+    rotatedAt: ts("rotated_at"),
+    revokedAt: ts("revoked_at"),
+    replacedById: varchar("replaced_by_id", { length: 36 }),
+    userAgent: text("user_agent"),
+  },
+  (t) => [
+    index("refresh_tokens_user_idx").on(t.userId),
+    index("refresh_tokens_family_idx").on(t.familyId),
+    index("refresh_tokens_expires_idx").on(t.expiresAt),
+    // the janitor deletes by these three columns; partial indexes keep it cheap on a large table
+    index("refresh_tokens_rotated_idx").on(t.rotatedAt).where(sql`${t.rotatedAt} IS NOT NULL`),
+    index("refresh_tokens_revoked_idx").on(t.revokedAt).where(sql`${t.revokedAt} IS NOT NULL`),
+  ]
+);
+
+// ─── Push devices ─────────────────────────────────────────────────────────────
+export const pushDevices = pgTable(
+  "push_devices",
+  {
+    id: pk(),
+    userId: varchar("user_id", { length: 36 })
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    token: text("token").notNull().unique(),
+    platform: text("platform"),
+    createdAt: createdAt(),
+    lastSeenAt: ts("last_seen_at").notNull().default(sql`now()`),
+    /** Set when Expo reports DeviceNotRegistered; such tokens are never used again. */
+    disabledAt: ts("disabled_at"),
+  },
+  (t) => [index("push_devices_user_idx").on(t.userId)]
+);
+
+// ─── Media uploads ────────────────────────────────────────────────────────────
+export const mediaUploads = pgTable(
+  "media_uploads",
+  {
+    id: pk(),
+    provider: text("provider").notNull(),
+    kind: text("kind").notNull(), // "image" | "video"
+    objectKey: text("object_key").notNull().unique(),
+    contentType: text("content_type").notNull(),
+    declaredBytes: integer("declared_bytes"),
+    status: text("status").notNull().default("pending"), // "pending" | "ready"
+    url: text("url"),
+    createdBy: varchar("created_by", { length: 36 }).references(() => users.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+    completedAt: ts("completed_at"),
+  },
+  (t) => [
+    index("media_uploads_status_idx").on(t.status, t.createdAt),
+    check("media_uploads_status_chk", sql`${t.status} IN ('pending', 'ready')`),
+  ]
+);
+
+// ─── Audit log ────────────────────────────────────────────────────────────────
+export const auditLogs = pgTable(
+  "audit_logs",
+  {
+    id: pk(),
+    actorId: varchar("actor_id", { length: 36 }).references(() => users.id, { onDelete: "set null" }),
+    actorUsername: text("actor_username"),
+    action: text("action").notNull(),
+    targetType: text("target_type"),
+    targetId: text("target_id"),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    ip: text("ip"),
+    requestId: text("request_id"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("audit_logs_created_idx").on(t.createdAt),
+    index("audit_logs_target_idx").on(t.targetType, t.targetId),
+    index("audit_logs_actor_idx").on(t.actorId),
+  ]
 );
 
 // ─── Relations ────────────────────────────────────────────────────────────────
@@ -322,6 +431,7 @@ export const usersRelations = relations(users, ({ many }) => ({
   moduleProgress: many(moduleProgress),
   certificates: many(certificates),
   quizAttempts: many(quizAttempts),
+  pushDevices: many(pushDevices),
 }));
 
 export const coursesRelations = relations(courses, ({ many }) => ({
@@ -331,131 +441,25 @@ export const coursesRelations = relations(courses, ({ many }) => ({
 }));
 
 export const modulesRelations = relations(modules, ({ one, many }) => ({
-  course: one(courses, {
-    fields: [modules.courseId],
-    references: [courses.id],
-  }),
+  course: one(courses, { fields: [modules.courseId], references: [courses.id] }),
   lessons: many(lessons),
   quizzes: many(quizzes),
   progress: many(moduleProgress),
 }));
 
 export const lessonsRelations = relations(lessons, ({ one, many }) => ({
-  module: one(modules, {
-    fields: [lessons.moduleId],
-    references: [modules.id],
-  }),
+  module: one(modules, { fields: [lessons.moduleId], references: [modules.id] }),
   progress: many(lessonProgress),
 }));
 
 export const quizzesRelations = relations(quizzes, ({ one, many }) => ({
-  module: one(modules, {
-    fields: [quizzes.moduleId],
-    references: [modules.id],
-  }),
+  module: one(modules, { fields: [quizzes.moduleId], references: [modules.id] }),
   questions: many(quizQuestions),
   attempts: many(quizAttempts),
 }));
 
-// ─── Zod validation schemas ───────────────────────────────────────────────────
-export const registerSchema = z.object({
-  username: z
-    .string()
-    .min(3, "Min 3 characters")
-    .max(30)
-    .regex(/^[a-zA-Z0-9_]+$/, "Only letters, numbers and underscore"),
-  password: z.string().min(8, "Password must be at least 8 characters"),
-  displayName: z.string().min(1).max(60),
-  email: z.string().email().optional(),
-  phoneNumber: z
-    .string()
-    .regex(/^\+?[0-9]{10,15}$/)
-    .optional(),
-  preferredLang: z.enum(["en", "hi"]).optional(),
-});
-
-export const loginSchema = z.object({
-  username: z.string().min(1),
-  password: z.string().min(1),
-});
-
-export const forgotPasswordSchema = z.object({
-  email: z.string().email(),
-});
-
-export const resetPasswordSchema = z.object({
-  email: z.string().email(),
-  code: z.string().min(6).max(12),
-  newPassword: z.string().min(8, "Password must be at least 8 characters"),
-});
-
-export const changePasswordSchema = z.object({
-  currentPassword: z.string().min(1),
-  newPassword: z.string().min(8, "Password must be at least 8 characters"),
-});
-
-export const createCourseSchema = z.object({
-  slug: z
-    .string()
-    .min(2)
-    .regex(/^[a-z0-9-]+$/, "Lowercase letters, numbers and hyphens only"),
-  title: z.string().min(2),
-  titleHi: z.string().optional(),
-  description: z.string().min(10),
-  descriptionHi: z.string().optional(),
-  category: z.enum([
-    "safety",
-    "basics",
-    "tools",
-    "discipline",
-    "electrical",
-    "plumbing",
-    "masonry",
-    "equipment",
-  ]),
-  difficulty: z.enum(["beginner", "intermediate", "advanced"]),
-  thumbnailUrl: z.string().url().optional(),
-});
-
-export const createModuleSchema = z.object({
-  title: z.string().min(2),
-  titleHi: z.string().optional(),
-  description: z.string().optional(),
-  descriptionHi: z.string().optional(),
-  sortOrder: z.number().int().min(0).optional(),
-});
-
-export const createLessonSchema = z.object({
-  title: z.string().min(2),
-  titleHi: z.string().optional(),
-  contentType: z.enum(["video", "text", "image", "quiz"]),
-  videoUrl: z.string().url().optional(),
-  videoProvider: z.enum(["youtube", "cloudinary", "s3", "local"]).optional(),
-  videoDurationSeconds: z.number().int().positive().optional(),
-  content: z.string().optional(),
-  contentHi: z.string().optional(),
-  imageUrl: z.string().url().optional(),
-  sortOrder: z.number().int().min(0).optional(),
-  isRequired: z.boolean().optional(),
-});
-
-export const createQuizSchema = z.object({
-  title: z.string().min(2),
-  passingScore: z.number().int().min(1).max(100).optional(),
-  questions: z.array(
-    z.object({
-      question: z.string().min(5),
-      questionHi: z.string().optional(),
-      options: z.array(z.string()).length(4),
-      optionsHi: z.array(z.string()).length(4).optional(),
-      correctIndex: z.number().int().min(0).max(3),
-      explanation: z.string().optional(),
-      explanationHi: z.string().optional(),
-    })
-  ),
-});
-
 // ─── Types ────────────────────────────────────────────────────────────────────
+export type Role = (typeof ROLES)[number];
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 export type Course = typeof courses.$inferSelect;
@@ -469,3 +473,6 @@ export type LessonProgress = typeof lessonProgress.$inferSelect;
 export type ModuleProgress = typeof moduleProgress.$inferSelect;
 export type CourseEnrollment = typeof courseEnrollments.$inferSelect;
 export type QuizAttempt = typeof quizAttempts.$inferSelect;
+export type RefreshToken = typeof refreshTokens.$inferSelect;
+export type PushDevice = typeof pushDevices.$inferSelect;
+export type AuditLog = typeof auditLogs.$inferSelect;

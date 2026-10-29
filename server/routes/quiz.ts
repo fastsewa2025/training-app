@@ -1,187 +1,41 @@
-import { Router, Response } from "express";
+import { Router } from "express";
+import { eq } from "drizzle-orm";
+import { quizzes } from "@shared/schema";
 import { db } from "../db";
-import {
-  quizzes,
-  quizQuestions,
-  quizAttempts,
-  moduleProgress,
-  createQuizSchema,
-} from "@shared/schema";
-import { eq, and, asc } from "drizzle-orm";
-import { requireAuth, requireRole, AuthRequest } from "../middleware/auth";
-import { z } from "zod";
-import { evaluateModuleCompletion } from "../services/progress";
-import { paramStr } from "../utils/params";
+import { notFound } from "../errors";
+import { requireAuth } from "../middleware/auth";
+import type { Limiters } from "../middleware/rateLimit";
+import { getCourseAccess, getModuleContext } from "../services/access";
+import { getQuizForLearner, listAttempts, submitQuiz } from "../services/quiz";
+import { idParam } from "../utils/params";
+import { parse } from "../utils/validate";
+import { quizSubmitBody } from "../validators";
 
-export const quizRouter = Router();
-quizRouter.use(requireAuth);
+export function quizRoutes(l: Limiters): Router {
+  const r = Router();
+  r.use(requireAuth, l.authenticated);
 
-// GET /api/v1/quiz/module/:moduleId — get quiz (no correct answers exposed)
-quizRouter.get("/module/:moduleId", async (req: AuthRequest, res: Response) => {
-  const [quiz] = await db
-    .select()
-    .from(quizzes)
-    .where(eq(quizzes.moduleId, paramStr(req.params.moduleId)))
-    .limit(1);
-
-  if (!quiz) return res.status(404).json({ error: "No quiz found for this module" });
-
-  const questions = await db
-    .select({
-      id: quizQuestions.id,
-      question: quizQuestions.question,
-      questionHi: quizQuestions.questionHi,
-      options: quizQuestions.options,
-      optionsHi: quizQuestions.optionsHi,
-      sortOrder: quizQuestions.sortOrder,
-      // correctIndex intentionally omitted
-    })
-    .from(quizQuestions)
-    .where(eq(quizQuestions.quizId, quiz.id))
-    .orderBy(asc(quizQuestions.sortOrder));
-
-  res.json({
-    quiz: { id: quiz.id, title: quiz.title, passingScore: quiz.passingScore },
-    questions,
-  });
-});
-
-// POST /api/v1/quiz/:quizId/submit
-quizRouter.post("/:quizId/submit", async (req: AuthRequest, res: Response) => {
-  const schema = z.object({
-    answers: z.array(z.number().int().min(0).max(3)),
+  // GET /quiz/module/:moduleId — questions without the answers (locked until the module's lessons are done)
+  r.get("/module/:moduleId", async (req, res) => {
+    res.json(await getQuizForLearner(req.user!, idParam(req, "moduleId", "Module")));
   });
 
-  const result = schema.safeParse(req.body);
-  if (!result.success) return res.status(400).json({ error: result.error.flatten() });
-
-  const [quiz] = await db
-    .select()
-    .from(quizzes)
-    .where(eq(quizzes.id, paramStr(req.params.quizId)))
-    .limit(1);
-
-  if (!quiz) return res.status(404).json({ error: "Quiz not found" });
-
-  const questions = await db
-    .select({
-      id: quizQuestions.id,
-      correctIndex: quizQuestions.correctIndex,
-      explanation: quizQuestions.explanation,
-      explanationHi: quizQuestions.explanationHi,
-    })
-    .from(quizQuestions)
-    .where(eq(quizQuestions.quizId, quiz.id))
-    .orderBy(asc(quizQuestions.sortOrder));
-
-  const { answers } = result.data;
-  if (answers.length !== questions.length) {
-    return res.status(400).json({ error: `Expected ${questions.length} answers, got ${answers.length}` });
-  }
-
-  let correct = 0;
-  const feedback = questions.map((q, i) => {
-    const isCorrect = answers[i] === q.correctIndex;
-    if (isCorrect) correct++;
-    return {
-      questionId: q.id,
-      yourAnswer: answers[i],
-      correctAnswer: q.correctIndex,
-      isCorrect,
-      explanation: q.explanation,
-      explanationHi: q.explanationHi,
-    };
+  // POST /quiz/:quizId/submit
+  r.post("/:quizId/submit", l.quizSubmit, async (req, res) => {
+    const body = parse(quizSubmitBody, req.body);
+    res.json(await submitQuiz(req.user!, idParam(req, "quizId", "Quiz"), body.answers));
   });
 
-  const score = Math.round((correct / questions.length) * 100);
-  const passed = score >= quiz.passingScore;
+  // GET /quiz/:quizId/attempts — the learner's own history
+  r.get("/:quizId/attempts", async (req, res) => {
+    const quizId = idParam(req, "quizId", "Quiz");
+    const [quiz] = await db.select({ moduleId: quizzes.moduleId }).from(quizzes).where(eq(quizzes.id, quizId)).limit(1);
+    if (!quiz) throw notFound("Quiz");
+    const mod = await getModuleContext(quiz.moduleId);
+    if (!mod) throw notFound("Quiz");
+    await getCourseAccess(req.user!, mod.courseId, "content");
+    res.json(await listAttempts(req.user!.id, quizId));
+  });
 
-  const [attempt] = await db
-    .insert(quizAttempts)
-    .values({
-      userId: req.user!.id,
-      quizId: quiz.id,
-      answers,
-      score,
-      passed,
-    })
-    .returning();
-
-  await db
-    .insert(moduleProgress)
-    .values({
-      userId: req.user!.id,
-      moduleId: quiz.moduleId,
-      quizScore: score,
-      quizPassed: passed,
-    })
-    .onConflictDoUpdate({
-      target: [moduleProgress.userId, moduleProgress.moduleId],
-      set: {
-        quizScore: score,
-        quizPassed: passed,
-      },
-    });
-
-  // Module/course completion (and cert issuance) requires lessons done AND
-  // quiz passed — evaluated centrally so this can't fall out of sync with
-  // the lesson-completion path in progress.ts.
-  await evaluateModuleCompletion(req.user!.id, quiz.moduleId);
-
-  res.json({ score, passed, passingScore: quiz.passingScore, feedback, attempt });
-});
-
-// GET /api/v1/quiz/:quizId/attempts — user's attempt history
-quizRouter.get("/:quizId/attempts", async (req: AuthRequest, res: Response) => {
-  const attempts = await db
-    .select({
-      id: quizAttempts.id,
-      score: quizAttempts.score,
-      passed: quizAttempts.passed,
-      attemptedAt: quizAttempts.attemptedAt,
-    })
-    .from(quizAttempts)
-    .where(
-      and(
-        eq(quizAttempts.userId, req.user!.id),
-        eq(quizAttempts.quizId, paramStr(req.params.quizId))
-      )
-    );
-
-  res.json(attempts);
-});
-
-// POST /api/v1/quiz/admin/module/:moduleId — create quiz (admin only)
-quizRouter.post(
-  "/admin/module/:moduleId",
-  requireRole("admin"),
-  async (req: AuthRequest, res: Response) => {
-    const result = createQuizSchema.safeParse(req.body);
-    if (!result.success) return res.status(400).json({ error: result.error.flatten() });
-
-    const { title, passingScore, questions } = result.data;
-
-    const [quiz] = await db
-      .insert(quizzes)
-      .values({ moduleId: paramStr(req.params.moduleId), title, passingScore: passingScore ?? 70 })
-      .returning();
-
-    if (questions.length > 0) {
-      await db.insert(quizQuestions).values(
-        questions.map((q, i) => ({
-          quizId: quiz.id,
-          question: q.question,
-          questionHi: q.questionHi,
-          options: q.options,
-          optionsHi: q.optionsHi,
-          correctIndex: q.correctIndex,
-          explanation: q.explanation,
-          explanationHi: q.explanationHi,
-          sortOrder: i,
-        }))
-      );
-    }
-
-    res.status(201).json(quiz);
-  }
-);
+  return r;
+}

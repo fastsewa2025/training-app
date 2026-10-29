@@ -1,211 +1,125 @@
-import React from "react";
-import {
-  View, StyleSheet, ScrollView, Pressable, ActivityIndicator,
-} from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
-import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
-import { RouteProp, useRoute, useNavigation } from "@react-navigation/native";
-import { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import { Feather } from "@expo/vector-icons";
-
+import Feather from "@expo/vector-icons/Feather"; // this icon set only: importing the package root would bundle every font (about 4 MB)
+import React from "react";
+import { Pressable, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
+import { useTranslation } from "react-i18next";
+import { QueryGate } from "@/components/QueryGate";
 import { ThemedText } from "@/components/ThemedText";
+import { Badge, Banner, Button, Card, ProgressBar, Screen } from "@/components/ui";
+import { BorderRadius, MIN_TOUCH, Spacing } from "@/constants/theme";
+import { useLang } from "@/hooks/useLang";
 import { useTheme } from "@/hooks/useTheme";
-import { apiClient } from "@/lib/api";
-import { Colors, Spacing, BorderRadius, Typography } from "@/constants/theme";
-import { RootStackParamList } from "@/navigation/RootStackNavigator";
+import { waitText } from "@/lib/errors";
+import { formatClock, pick } from "@/lib/format";
+import { moduleOptions } from "@/lib/queries";
+import { countText } from "@/lib/translate";
+import { useAppNavigation, type ScreenProps } from "@/navigation/hooks";
+import type { ContentType, ModuleDetail } from "@/types";
 
-type RoutePropType = RouteProp<RootStackParamList, "ModuleDetail">;
-type NavProp = NativeStackNavigationProp<RootStackParamList>;
+const TYPE_ICON: Record<ContentType, keyof typeof Feather.glyphMap> = { video: "play-circle", text: "file-text", image: "image", quiz: "help-circle" };
 
-export default function ModuleDetailScreen() {
-  const { t, i18n } = useTranslation();
+export default function ModuleDetailScreen({ route }: ScreenProps<"ModuleDetail">) {
+  const query = useQuery(moduleOptions(route.params.moduleId));
+  return (
+    <Screen edges={["bottom", "left", "right"]}>
+      <QueryGate query={query}>{(module) => <ModuleBody module={module} refreshing={query.isRefetching} onRefresh={() => void query.refetch()} />}</QueryGate>
+    </Screen>
+  );
+}
+
+function ModuleBody({ module, refreshing, onRefresh }: { module: ModuleDetail; refreshing: boolean; onRefresh: () => void }) {
+  const { t } = useTranslation();
   const { theme } = useTheme();
-  const route = useRoute<RoutePropType>();
-  const navigation = useNavigation<NavProp>();
-
-  const { moduleId } = route.params;
-
-  const { data: module, isLoading } = useQuery({
-    queryKey: ["module", moduleId],
-    queryFn: () => apiClient.get<any>(`/api/v1/courses/module/${moduleId}`),
-  });
-
-  const { data: progress } = useQuery({
-    queryKey: ["module-progress", moduleId],
-    queryFn: () => apiClient.get<any[]>(`/api/v1/progress/lesson?moduleId=${moduleId}`),
-  });
-
-  if (isLoading || !module) {
-    return (
-      <View style={[styles.center, { backgroundColor: theme.backgroundRoot }]}>
-        <ActivityIndicator size="large" color={Colors.light.primary} />
-      </View>
-    );
-  }
-
-  const progressMap = new Map((progress || []).map((p: any) => [p.lessonId, p]));
-  const lessons = module.lessons || [];
-  const completedCount = lessons.filter((l: any) => progressMap.get(l.id)?.completed).length;
-
-  const CONTENT_ICONS: Record<string, string> = {
-    video: "play-circle",
-    text: "file-text",
-    image: "image",
-    quiz: "help-circle",
-  };
+  const lang = useLang();
+  const navigation = useAppNavigation();
+  const { quiz, progress } = module;
+  const description = pick(lang, module.description, module.descriptionHi);
+  const required = progress?.requiredLessons ?? 0;
+  const requiredDone = progress?.requiredDone ?? 0;
 
   return (
-    <SafeAreaView style={[styles.safe, { backgroundColor: theme.backgroundRoot }]}>
-      <ScrollView contentContainerStyle={styles.scroll}>
-        {/* Header */}
-        <View style={styles.header}>
-          <ThemedText type="h2">
-            {i18n.language === "hi" && module.titleHi ? module.titleHi : module.title}
+    <ScrollView contentContainerStyle={styles.content} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.primaryText} colors={[theme.primaryText]} />}>
+      <ThemedText type="h1" accessibilityRole="header">
+        {pick(lang, module.title, module.titleHi)}
+      </ThemedText>
+      {description ? <ThemedText type="reading">{description}</ThemedText> : null}
+      {progress && required > 0 ? (
+        <View style={{ gap: Spacing.xs }}>
+          <ProgressBar percent={(requiredDone / required) * 100} label={t("module.requiredProgress", { done: requiredDone, total: required })} />
+          <ThemedText type="small" muted>
+            {t("module.requiredProgress", { done: requiredDone, total: required })}
           </ThemedText>
-          {module.description && (
-            <ThemedText style={{ color: theme.textSecondary, marginTop: 6 }}>
-              {i18n.language === "hi" && module.descriptionHi ? module.descriptionHi : module.description}
-            </ThemedText>
-          )}
-
-          {/* Progress */}
-          <View style={styles.progressRow}>
-            <View style={[styles.progressBar, { backgroundColor: theme.border }]}>
-              <View
-                style={[
-                  styles.progressFill,
-                  {
-                    width: lessons.length > 0 ? `${(completedCount / lessons.length) * 100}%` : "0%",
-                    backgroundColor: Colors.light.primary,
-                  },
-                ]}
-              />
-            </View>
-            <ThemedText type="small" style={{ color: theme.textSecondary }}>
-              {completedCount}/{lessons.length}
-            </ThemedText>
-          </View>
         </View>
+      ) : null}
 
-        {/* Lessons */}
-        <View style={styles.lessons}>
-          <ThemedText type="h4" style={{ marginBottom: Spacing.md }}>Lessons</ThemedText>
-          {lessons.map((lesson: any, idx: number) => {
-            const prog = progressMap.get(lesson.id);
-            const done = prog?.completed;
-            const lessonTitle = i18n.language === "hi" && lesson.titleHi ? lesson.titleHi : lesson.title;
-
-            return (
-              <Pressable
-                key={lesson.id}
-                style={[
-                  styles.lessonRow,
-                  {
-                    backgroundColor: done ? Colors.light.success + "15" : theme.backgroundDefault,
-                    borderColor: done ? Colors.light.success : theme.border,
-                  },
-                ]}
-                onPress={() => navigation.navigate("LessonDetail", { lessonId: lesson.id })}
-              >
-                <View
-                  style={[
-                    styles.lessonIcon,
-                    { backgroundColor: done ? Colors.light.success : Colors.light.primary + "20" },
-                  ]}
-                >
-                  <Feather
-                    name={(CONTENT_ICONS[lesson.contentType] || "file") as any}
-                    size={18}
-                    color={done ? "#fff" : Colors.light.primary}
-                  />
-                </View>
-                <View style={styles.lessonInfo}>
-                  <ThemedText style={{ fontWeight: "600", flex: 1 }} numberOfLines={2}>
-                    {lessonTitle}
-                  </ThemedText>
-                  <View style={styles.lessonMeta}>
-                    <ThemedText type="caption" style={{ color: theme.textSecondary, textTransform: "capitalize" }}>
-                      {lesson.contentType}
-                    </ThemedText>
-                    {lesson.videoDurationSeconds && (
-                      <ThemedText type="caption" style={{ color: theme.textSecondary }}>
-                        · {Math.ceil(lesson.videoDurationSeconds / 60)} min
-                      </ThemedText>
-                    )}
-                    {prog?.videoProgressSeconds > 0 && !done && (
-                      <ThemedText type="caption" style={{ color: Colors.light.warning }}>
-                        · {t("continueModule")}
-                      </ThemedText>
-                    )}
-                  </View>
-                </View>
-                {done ? (
-                  <Feather name="check-circle" size={22} color={Colors.light.success} />
-                ) : (
-                  <Feather name="chevron-right" size={22} color={theme.textSecondary} />
-                )}
-              </Pressable>
-            );
-          })}
-        </View>
-
-        {/* Take Quiz button if all required lessons done */}
-        {completedCount === lessons.length && lessons.length > 0 && (
-          <View style={styles.quizSection}>
-            <View style={[styles.quizBanner, { backgroundColor: Colors.light.primary + "15" }]}>
-              <ThemedText style={{ fontSize: 32 }}>🎯</ThemedText>
-              <View style={{ flex: 1 }}>
-                <ThemedText type="h4">{t("quizTitle")}</ThemedText>
-                <ThemedText type="small" style={{ color: theme.textSecondary }}>
-                  Complete the quiz to earn your certificate
-                </ThemedText>
-              </View>
+      <ThemedText type="h3" accessibilityRole="header">
+        {t("module.lessons")}
+      </ThemedText>
+      {module.lessons.length === 0 ? <ThemedText muted>{t("module.noLessons")}</ThemedText> : null}
+      {module.lessons.map((lesson) => {
+        const title = pick(lang, lesson.title, lesson.titleHi);
+        const detail = [t(`contentType.${lesson.contentType}`), ...(lesson.videoDurationSeconds ? [formatClock(lesson.videoDurationSeconds)] : [])].join(" · ");
+        return (
+          <Pressable
+            key={lesson.id}
+            onPress={() => navigation.navigate("LessonDetail", { lessonId: lesson.id })}
+            accessibilityRole="button"
+            accessibilityLabel={`${title}. ${detail}. ${lesson.completed ? t("tasks.statusDone") : t("tasks.statusTodo")}${lesson.isRequired ? "" : `. ${t("module.optional")}`}`}
+            style={({ pressed }) => [styles.lessonRow, { backgroundColor: theme.surface, borderColor: lesson.completed ? theme.success : theme.border }, pressed && { opacity: 0.85 }]}
+          >
+            <Feather name={lesson.completed ? "check-circle" : "circle"} size={26} color={lesson.completed ? theme.success : theme.controlBorder} />
+            <View style={{ flex: 1, gap: 2 }}>
+              <ThemedText style={{ fontWeight: "600" }} numberOfLines={2}>
+                {title}
+              </ThemedText>
+              <ThemedText type="small" muted>
+                {detail}
+              </ThemedText>
             </View>
-            <Pressable
-              style={[styles.quizBtn, { backgroundColor: Colors.light.primary }]}
-              onPress={() => navigation.navigate("Quiz", { moduleId })}
-            >
-              <Feather name="help-circle" size={20} color="#fff" />
-              <ThemedText style={styles.quizBtnText}>{t("quizTitle")}</ThemedText>
-            </Pressable>
-          </View>
-        )}
-      </ScrollView>
-    </SafeAreaView>
+            {!lesson.isRequired ? <Badge label={t("module.optional")} color={theme.text} tint={theme.surfaceAlt} /> : null}
+            <Feather name={TYPE_ICON[lesson.contentType]} size={20} color={theme.textSecondary} />
+          </Pressable>
+        );
+      })}
+
+      {quiz ? <QuizCard moduleId={module.id} quiz={quiz} /> : null}
+    </ScrollView>
+  );
+}
+
+function QuizCard({ moduleId, quiz }: { moduleId: string; quiz: NonNullable<ModuleDetail["quiz"]> }) {
+  const { t } = useTranslation();
+  const navigation = useAppNavigation();
+  const secondsUntilNext = quiz.nextAttemptAt ? Math.max(1, (new Date(quiz.nextAttemptAt).getTime() - Date.now()) / 1000) : 0;
+  const exhausted = quiz.nextAttemptAt !== null && secondsUntilNext > 0;
+  const attemptsLeft = Math.max(0, quiz.maxAttempts - quiz.attemptsToday);
+  const open = () => navigation.navigate("Quiz", { moduleId });
+
+  return (
+    <Card style={{ gap: Spacing.md, marginTop: Spacing.sm }}>
+      <ThemedText type="h3" accessibilityRole="header">
+        {t("module.quiz")}
+      </ThemedText>
+      {quiz.passed ? <Banner tone="success" icon="award">{t("module.quizPassed", { score: quiz.bestScore ?? 0 })}</Banner> : null}
+      {quiz.locked ? (
+        <Banner tone="info" icon="lock">
+          {t("module.quizLocked")}
+        </Banner>
+      ) : exhausted ? (
+        <Banner tone="warning" icon="clock">
+          {t("module.attemptsUsed", { wait: waitText(secondsUntilNext, t) })}
+        </Banner>
+      ) : (
+        <ThemedText muted>
+          {t("module.quizReady", { score: quiz.passingScore })} {countText(t, "module.attemptsLeft", attemptsLeft)}
+        </ThemedText>
+      )}
+      <Button label={quiz.passed ? t("module.quizRetake") : t("module.quizStart")} icon="edit-3" variant={quiz.passed ? "secondary" : "primary"} onPress={open} disabled={quiz.locked || exhausted} />
+    </Card>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1 },
-  center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  scroll: { paddingBottom: 100 },
-  header: { padding: Spacing.lg, gap: Spacing.md },
-  progressRow: {
-    flexDirection: "row", alignItems: "center", gap: Spacing.sm, marginTop: 4,
-  },
-  progressBar: { flex: 1, height: 8, borderRadius: 4, overflow: "hidden" },
-  progressFill: { height: "100%", borderRadius: 4 },
-  lessons: { paddingHorizontal: Spacing.lg },
-  lessonRow: {
-    flexDirection: "row", alignItems: "center", gap: Spacing.md,
-    padding: Spacing.md, borderRadius: BorderRadius.md, borderWidth: 1,
-    marginBottom: Spacing.sm,
-  },
-  lessonIcon: {
-    width: 44, height: 44, borderRadius: 22,
-    alignItems: "center", justifyContent: "center",
-  },
-  lessonInfo: { flex: 1 },
-  lessonMeta: { flexDirection: "row", gap: 4, marginTop: 2 },
-  quizSection: { padding: Spacing.lg, gap: Spacing.md },
-  quizBanner: {
-    flexDirection: "row", alignItems: "center", gap: Spacing.md,
-    padding: Spacing.lg, borderRadius: BorderRadius.md,
-  },
-  quizBtn: {
-    height: 56, borderRadius: BorderRadius.full,
-    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
-  },
-  quizBtnText: { ...Typography.body, fontWeight: "700", color: "#fff" },
+  content: { padding: Spacing.lg, gap: Spacing.md, paddingBottom: Spacing["3xl"] },
+  lessonRow: { flexDirection: "row", alignItems: "center", gap: Spacing.md, minHeight: MIN_TOUCH + 12, padding: Spacing.md, borderRadius: BorderRadius.md, borderWidth: 1.5 },
 });

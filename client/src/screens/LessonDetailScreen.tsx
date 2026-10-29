@@ -1,260 +1,156 @@
-import React, { useEffect, useRef } from "react";
-import {
-  View, StyleSheet, ScrollView, Pressable, ActivityIndicator, Image,
-} from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import * as Haptics from "expo-haptics";
+import React, { useCallback, useState } from "react";
+import { Image, ScrollView, StyleSheet, View } from "react-native";
 import { useTranslation } from "react-i18next";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { RouteProp, useRoute, useNavigation } from "@react-navigation/native";
-import { WebView } from "react-native-webview";
-import { Feather } from "@expo/vector-icons";
-
+import { Markdown } from "@/components/Markdown";
+import { QueryGate } from "@/components/QueryGate";
 import { ThemedText } from "@/components/ThemedText";
+import { VideoPlayer } from "@/components/video/VideoPlayer";
+import { Badge, Banner, Button, Card, OfflineBanner, ProgressBar, Screen } from "@/components/ui";
+import { BorderRadius, Spacing } from "@/constants/theme";
+import { useCertificateActions } from "@/hooks/useCertificateActions";
+import { useLang } from "@/hooks/useLang";
+import { useLessonTracker } from "@/hooks/useLessonTracker";
+import { useOnline } from "@/hooks/useOnline";
 import { useTheme } from "@/hooks/useTheme";
-import { apiClient } from "@/lib/api";
-import { Colors, Spacing, BorderRadius, Typography } from "@/constants/theme";
-import { RootStackParamList } from "@/navigation/RootStackNavigator";
+import { api } from "@/lib/api";
+import { API_BASE_URL } from "@/lib/config";
+import { errorMessage, waitText } from "@/lib/errors";
+import { afterLesson, resumePosition, secondsStillNeeded, watchPercent } from "@/lib/learning";
+import { pick } from "@/lib/format";
+import { resolveMediaUrl } from "@/lib/media";
+import { keys, lessonOptions, moduleOptions, refreshAfterProgress } from "@/lib/queries";
+import { useAppNavigation, type ScreenProps } from "@/navigation/hooks";
+import type { LessonDetail, LessonProgressView, RecordResult } from "@/types";
 
-type RoutePropType = RouteProp<RootStackParamList, "LessonDetail">;
-
-function getYouTubeEmbedUrl(url: string, startSeconds: number): string | null {
-  const match = url.match(
-    /(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([^&?/]+)/
+export default function LessonDetailScreen({ route }: ScreenProps<"LessonDetail">) {
+  const query = useQuery(lessonOptions(route.params.lessonId));
+  return (
+    <Screen edges={["bottom", "left", "right"]}>
+      {/* keyed by lesson: moving to the next lesson starts a clean tracker and player */}
+      <QueryGate query={query}>{(lesson) => <LessonBody key={lesson.id} lesson={lesson} />}</QueryGate>
+    </Screen>
   );
-  const id = match?.[1];
-  if (!id) return null;
-  const start = startSeconds > 5 ? `&start=${Math.floor(startSeconds)}` : "";
-  return `https://www.youtube.com/embed/${id}?playsinline=1&rel=0&modestbranding=1${start}`;
 }
 
-export default function LessonDetailScreen() {
-  const { t, i18n } = useTranslation();
+function LessonBody({ lesson }: { lesson: LessonDetail }) {
+  const { t } = useTranslation();
   const { theme } = useTheme();
-  const route = useRoute<RoutePropType>();
-  const navigation = useNavigation();
-  const qc = useQueryClient();
-  const { lessonId } = route.params;
+  const lang = useLang();
+  const online = useOnline();
+  const navigation = useAppNavigation();
+  const queryClient = useQueryClient();
+  const certActions = useCertificateActions();
+  const [finished, setFinished] = useState<RecordResult | null>(null);
 
-  const videoProgress = useRef(0);
-  const saveInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+  const progress = lesson.progress;
+  const isVideo = lesson.contentType === "video" && !!lesson.videoUrl;
+  const completed = progress.completed;
 
-  const { data: lesson, isLoading } = useQuery({
-    queryKey: ["lesson", lessonId],
-    queryFn: () => apiClient.get<any>(`/api/v1/courses/lesson/${lessonId}`),
-  });
-
-  const { data: resumeData } = useQuery({
-    queryKey: ["lesson-progress", lessonId],
-    queryFn: () => apiClient.get<any>(`/api/v1/progress/lesson/${lessonId}`),
-    enabled: !!lesson,
-  });
-
-  const progressMut = useMutation({
-    mutationFn: (data: { videoProgressSeconds?: number; completed?: boolean }) =>
-      apiClient.post("/api/v1/progress/lesson", { lessonId, ...data }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["lesson-progress", lessonId] });
-      qc.invalidateQueries({ queryKey: ["module-progress"] });
+  /** Every heartbeat answers with the server's current count; keep it on screen without refetching the lesson. */
+  const setProgress = useCallback(
+    (next: LessonProgressView) => {
+      queryClient.setQueryData<LessonDetail>(keys.lesson(lesson.id), (old) => (old ? { ...old, progress: next } : old));
     },
+    [queryClient, lesson.id]
+  );
+
+  const tracker = useLessonTracker({
+    lessonId: lesson.id,
+    enabled: !completed,
+    isVideo,
+    onProgress: (result) => setProgress(result.progress),
   });
-  const { mutate: saveProgress } = progressMut; // stable fn ref, safe in deps below
 
-  // Save video progress every 5 seconds
-  useEffect(() => {
-    if (lesson?.contentType === "video") {
-      saveInterval.current = setInterval(() => {
-        if (videoProgress.current > 0 && !resumeData?.completed) {
-          saveProgress({ videoProgressSeconds: videoProgress.current });
-        }
-      }, 5000);
-    }
-    return () => {
-      if (saveInterval.current) clearInterval(saveInterval.current);
-    };
-  }, [lesson, resumeData?.completed, saveProgress]);
+  const complete = useMutation({
+    mutationFn: () => {
+      const position = tracker.currentPosition();
+      return api.post<RecordResult>("/progress/lesson", { lessonId: lesson.id, completed: true, ...(position !== undefined ? { positionSeconds: position } : {}) });
+    },
+    onSuccess: (result) => {
+      setProgress(result.progress);
+      setFinished(result);
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+      void refreshAfterProgress(queryClient, { courseId: lesson.courseId, moduleId: lesson.moduleId, lessonId: lesson.id, certificate: result.newCertificate !== null });
+    },
+    // The server counts the time itself: when it says "not yet", show its latest count.
+    onError: () => void queryClient.invalidateQueries({ queryKey: keys.lesson(lesson.id) }),
+  });
 
-  const handleMarkComplete = () => {
-    progressMut.mutate(
-      { completed: true, videoProgressSeconds: videoProgress.current },
-      {
-        onSuccess: () => navigation.goBack(),
-      }
-    );
-  };
+  const moduleQuery = useQuery({ ...moduleOptions(lesson.moduleId), enabled: completed || finished !== null });
+  const next = moduleQuery.data ? afterLesson(moduleQuery.data, lesson.id) : null;
 
-  const handleWebViewMessage = (event: any) => {
-    try {
-      const data = JSON.parse(event.nativeEvent.data);
-      if (data.type === "progress") videoProgress.current = data.seconds;
-      if (data.type === "complete") {
-        if (saveInterval.current) clearInterval(saveInterval.current);
-        progressMut.mutate({ completed: true, videoProgressSeconds: videoProgress.current });
-        qc.invalidateQueries({ queryKey: ["module-progress"] });
-      }
-    } catch {}
-  };
-
-  if (isLoading || !lesson) {
-    return (
-      <View style={[styles.center, { backgroundColor: theme.backgroundRoot }]}>
-        <ActivityIndicator size="large" color={Colors.light.primary} />
-      </View>
-    );
-  }
-
-  const isCompleted = !!resumeData?.completed;
-  const resumeFrom = resumeData?.videoProgressSeconds || 0;
-  const title = i18n.language === "hi" && lesson.titleHi ? lesson.titleHi : lesson.title;
-  const content = i18n.language === "hi" && lesson.contentHi ? lesson.contentHi : lesson.content;
-
-  const ytUrl =
-    lesson.videoProvider === "youtube" && lesson.videoUrl
-      ? getYouTubeEmbedUrl(lesson.videoUrl, resumeFrom)
-      : null;
-
-  const ytJS = `
-    (function() {
-      var tag = document.createElement('script');
-      tag.src = 'https://www.youtube.com/iframe_api';
-      document.head.appendChild(tag);
-      window.onYouTubeIframeAPIReady = function() {
-        var p = new YT.Player('player', {
-          events: {
-            onStateChange: function(e) {
-              if (e.data === YT.PlayerState.ENDED) {
-                window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'complete' }));
-              }
-            }
-          }
-        });
-        setInterval(function() {
-          if (p && p.getCurrentTime) {
-            window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'progress', seconds: Math.floor(p.getCurrentTime()) }));
-          }
-        }, 2000);
-      };
-    })(); true;
-  `;
+  const title = pick(lang, lesson.title, lesson.titleHi);
+  const text = pick(lang, lesson.content, lesson.contentHi);
+  const image = resolveMediaUrl(lesson.imageUrl, API_BASE_URL);
+  const stillNeeded = secondsStillNeeded(progress);
+  const startAt = resumePosition(progress, lesson.videoDurationSeconds);
 
   return (
-    <SafeAreaView style={[styles.safe, { backgroundColor: theme.backgroundRoot }]}>
-      <ScrollView contentContainerStyle={styles.scroll}>
-        {/* Video */}
-        {lesson.contentType === "video" && ytUrl && (
-          <View style={styles.videoContainer}>
-            <WebView
-              source={{ uri: ytUrl }}
-              style={styles.video}
-              allowsInlineMediaPlayback
-              mediaPlaybackRequiresUserAction={false}
-              injectedJavaScript={ytJS}
-              onMessage={handleWebViewMessage}
-              javaScriptEnabled
-              domStorageEnabled
-            />
-            {resumeFrom > 5 && !isCompleted && (
-              <View style={[styles.resumeBanner, { backgroundColor: Colors.light.primary + "20" }]}>
-                <Feather name="clock" size={14} color={Colors.light.primary} />
-                <ThemedText type="small" style={{ color: Colors.light.primary }}>
-                  Resuming from {Math.floor(resumeFrom / 60)}:{String(resumeFrom % 60).padStart(2, "0")}
-                </ThemedText>
-              </View>
-            )}
-          </View>
-        )}
+    <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <View style={styles.badges}>
+        <Badge label={t(`contentType.${lesson.contentType}`)} color={theme.text} tint={theme.surfaceAlt} />
+        {completed ? <Badge label={t("lesson.completedBadge")} color={theme.success} tint={theme.successTint} /> : null}
+      </View>
+      <ThemedText type="h1" accessibilityRole="header">
+        {title}
+      </ThemedText>
 
-        {/* Direct video (Cloudinary/S3) */}
-        {lesson.contentType === "video" && lesson.videoProvider !== "youtube" && lesson.videoUrl && (
-          <View style={styles.videoContainer}>
-            <WebView
-              source={{ uri: lesson.videoUrl }}
-              style={styles.video}
-              allowsInlineMediaPlayback
-              mediaPlaybackRequiresUserAction={false}
-              javaScriptEnabled
-            />
-          </View>
-        )}
+      {!online && !completed ? <OfflineBanner /> : null}
+      {!online && !completed ? <Banner tone="warning">{t("lesson.offlineNoCredit")}</Banner> : null}
+      {tracker.previewOnly ? <Banner tone="warning">{t("lesson.previewOnly")}</Banner> : null}
 
-        {/* Image */}
-        {lesson.contentType === "image" && lesson.imageUrl && (
-          <Image source={{ uri: lesson.imageUrl }} style={styles.lessonImage} resizeMode="contain" />
-        )}
+      {isVideo ? <VideoPlayer lesson={lesson} startAt={startAt} onReport={tracker.report} /> : null}
+      {lesson.contentType === "image" && image ? <Image source={{ uri: image }} accessibilityLabel={title} accessibilityIgnoresInvertColors resizeMode="contain" style={[styles.image, { backgroundColor: theme.surfaceAlt }]} /> : null}
+      {lesson.contentType === "video" && !lesson.videoUrl ? <Banner tone="warning">{t("lesson.videoUnavailable")}</Banner> : null}
 
-        {/* Content */}
-        <View style={styles.content}>
-          <ThemedText type="h2">{title}</ThemedText>
+      {text ? <Markdown source={text} /> : null}
 
-          {isCompleted && (
-            <View style={[styles.completedBanner, { backgroundColor: Colors.light.success + "15" }]}>
-              <Feather name="check-circle" size={18} color={Colors.light.success} />
-              <ThemedText style={{ color: Colors.light.success, fontWeight: "600" }}>
-                {t("lessonComplete")}
-              </ThemedText>
-            </View>
-          )}
+      {lesson.contentType === "quiz" ? <Button label={t("lesson.takeQuiz")} icon="edit-3" onPress={() => navigation.navigate("Quiz", { moduleId: lesson.moduleId })} /> : null}
 
-          {content && (
-            <ThemedText style={[styles.textContent, { color: theme.text }]}>
-              {content}
-            </ThemedText>
-          )}
+      {!completed && !tracker.previewOnly ? (
+        <Card style={{ gap: Spacing.md }}>
+          <ThemedText type="h4">{t("lesson.timeTitle")}</ThemedText>
+          <ProgressBar percent={watchPercent(progress)} label={t("lesson.timeTitle")} height={10} />
+          <ThemedText muted accessibilityLiveRegion="polite">
+            {progress.canComplete ? t("lesson.canFinish") : t("lesson.keepGoing", { wait: waitText(stillNeeded, t) })}
+          </ThemedText>
+          {complete.isError ? <Banner tone="error">{errorMessage(complete.error, t)}</Banner> : null}
+          <Button label={complete.isPending ? t("lesson.saving") : t("lesson.markDone")} icon="check" onPress={() => complete.mutate()} loading={complete.isPending} disabled={!progress.canComplete} />
+        </Card>
+      ) : null}
 
-          {/* Mark complete */}
-          {!isCompleted && (
-            <Pressable
-              style={[styles.completeBtn, { backgroundColor: Colors.light.primary }]}
-              onPress={handleMarkComplete}
-              disabled={progressMut.isPending}
-            >
-              {progressMut.isPending ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <>
-                  <Feather name="check" size={20} color="#fff" />
-                  <ThemedText style={styles.completeBtnText}>{t("markComplete")}</ThemedText>
-                </>
-              )}
-            </Pressable>
-          )}
-
-          {isCompleted && (
-            <Pressable
-              style={[styles.completeBtn, { backgroundColor: theme.backgroundSecondary }]}
-              onPress={() => navigation.goBack()}
-            >
-              <Feather name="arrow-left" size={20} color={theme.text} />
-              <ThemedText style={[styles.completeBtnText, { color: theme.text }]}>
-                {t("previous")}
-              </ThemedText>
-            </Pressable>
-          )}
-        </View>
-      </ScrollView>
-    </SafeAreaView>
+      {completed ? (
+        <Card style={{ gap: Spacing.md }}>
+          <Banner tone="success" icon="check-circle">
+            {t("lesson.completed")}
+          </Banner>
+          {finished?.newCertificate ? (
+            <>
+              <Banner tone="success" icon="award">
+                {t("lesson.certificateEarned")}
+              </Banner>
+              {certActions.error ? <Banner tone="error">{errorMessage(certActions.error, t)}</Banner> : null}
+              <Button label={t("profile.download")} icon="download" onPress={() => void certActions.download(finished.newCertificate?.id ?? "")} loading={certActions.busyId === finished.newCertificate.id} />
+            </>
+          ) : finished?.course?.completed ? (
+            <Banner tone="success" icon="award">
+              {t("lesson.courseCompleted")}
+            </Banner>
+          ) : null}
+          {next?.kind === "lesson" ? <Button label={t("lesson.next")} icon="arrow-right" onPress={() => navigation.replace("LessonDetail", { lessonId: next.lessonId })} /> : null}
+          {next?.kind === "quiz" ? <Button label={t("lesson.takeQuiz")} icon="edit-3" onPress={() => navigation.navigate("Quiz", { moduleId: next.moduleId })} /> : null}
+          {next?.kind === "module" ? <Button label={t("lesson.backToModule")} variant="secondary" onPress={() => navigation.navigate("ModuleDetail", { moduleId: lesson.moduleId })} /> : null}
+          {!next ? <Button label={t("lesson.backToCourse")} variant="secondary" onPress={() => navigation.navigate("CourseDetail", { courseId: lesson.courseId })} /> : null}
+        </Card>
+      ) : null}
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1 },
-  center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  scroll: { paddingBottom: 100 },
-  videoContainer: { aspectRatio: 16 / 9, backgroundColor: "#000" },
-  video: { flex: 1 },
-  resumeBanner: {
-    flexDirection: "row", alignItems: "center", gap: 6,
-    padding: Spacing.sm, paddingHorizontal: Spacing.md,
-  },
-  lessonImage: { width: "100%", height: 240 },
-  content: { padding: Spacing.lg, gap: Spacing.lg },
-  completedBanner: {
-    flexDirection: "row", alignItems: "center", gap: Spacing.sm,
-    padding: Spacing.md, borderRadius: BorderRadius.sm,
-  },
-  textContent: { ...Typography.body, lineHeight: 26 },
-  completeBtn: {
-    height: 56, borderRadius: BorderRadius.full,
-    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
-  },
-  completeBtnText: { ...Typography.body, fontWeight: "700", color: "#fff" },
+  content: { padding: Spacing.lg, gap: Spacing.lg, paddingBottom: Spacing["3xl"] },
+  badges: { flexDirection: "row", gap: Spacing.sm },
+  image: { width: "100%", aspectRatio: 4 / 3, borderRadius: BorderRadius.md },
 });

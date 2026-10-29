@@ -1,178 +1,71 @@
-import React from "react";
-import { View, StyleSheet, Pressable } from "react-native";
-import { Feather } from "@expo/vector-icons";
-import { ThemedText } from "./ThemedText";
-import { useTheme } from "@/hooks/useTheme";
-import { Colors, Spacing, BorderRadius, Typography } from "@/constants/theme";
+import React, { useState } from "react";
+import { Image, StyleSheet, View } from "react-native";
+import Feather from "@expo/vector-icons/Feather"; // this icon set only: importing the package root would bundle every font (about 4 MB)
 import { useTranslation } from "react-i18next";
+import { Badge, Card, ProgressBar, categoryIcon } from "@/components/ui";
+import { ThemedText } from "@/components/ThemedText";
+import { BorderRadius, CATEGORY_COLOR, Spacing } from "@/constants/theme";
+import { useLang } from "@/hooks/useLang";
+import { useTheme } from "@/hooks/useTheme";
+import { pick } from "@/lib/format";
+import { API_BASE_URL } from "@/lib/config";
+import { resolveMediaUrl } from "@/lib/media";
+import { countText } from "@/lib/translate";
+import type { CourseListItem } from "@/types";
 
-const CAT_EMOJI: Record<string, string> = {
-  safety: "🦺",
-  basics: "🧱",
-  tools: "🔨",
-  discipline: "⏰",
-  electrical: "⚡",
-  plumbing: "🔧",
-  masonry: "🏗️",
-  equipment: "⚙️",
-};
+const THUMB = 84;
 
-const CAT_COLOR: Record<string, string> = {
-  safety: "#E74C3C",
-  basics: "#3498DB",
-  tools: "#F39C12",
-  discipline: "#9B59B6",
-  electrical: "#F1C40F",
-  plumbing: "#1ABC9C",
-  masonry: "#E67E22",
-  equipment: "#2ECC71",
-};
-
-interface CourseCardProps {
-  course: {
-    id: string;
-    title: string;
-    description: string;
-    category: string;
-    difficulty: string;
-    durationMinutes: number;
-    enrolled: boolean;
-    completionPercent: number;
-  };
-  onPress: () => void;
-}
-
-export function CourseCard({ course, onPress }: CourseCardProps) {
+export function CourseCard({ course, onPress }: { course: CourseListItem; onPress: () => void }) {
   const { theme } = useTheme();
   const { t } = useTranslation();
-  const catColor = CAT_COLOR[course.category] || Colors.light.primary;
+  const lang = useLang();
+  const [thumbFailed, setThumbFailed] = useState(false);
+
+  const title = pick(lang, course.title, course.titleHi);
+  const accent = CATEGORY_COLOR[course.category] ?? theme.brand;
+  const thumb = thumbFailed ? null : resolveMediaUrl(course.thumbnailUrl, API_BASE_URL);
+  const completed = course.completedAt !== null;
+  const meta = [
+    countText(t, "common.lessons", course.lessonCount),
+    ...(course.durationMinutes > 0 ? [countText(t, "common.minutes", course.durationMinutes)] : []),
+    t(`difficulty.${course.difficulty}`),
+  ].join(" · ");
+  const status = completed ? t("learn.completedBadge") : course.enrolled ? t("common.percentDone", { percent: course.completionPercent }) : null;
+  const label = [title, t(`categories.${course.category}`), meta, status].filter(Boolean).join(". ");
 
   return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.card,
-        { backgroundColor: theme.backgroundDefault, borderColor: theme.border },
-        pressed && styles.pressed,
-      ]}
-      accessibilityRole="button"
-      accessibilityLabel={`${course.title}, ${course.category} course`}
-    >
-      {/* Colour strip + emoji */}
-      <View style={[styles.strip, { backgroundColor: catColor + "25" }]}>
-        <ThemedText style={styles.emoji}>{CAT_EMOJI[course.category] || "📚"}</ThemedText>
-        <View style={[styles.catBadge, { backgroundColor: catColor }]}>
-          <ThemedText style={styles.catText}>{t(course.category as any)}</ThemedText>
-        </View>
-      </View>
-
-      <View style={styles.body}>
-        <ThemedText type="h4" numberOfLines={2}>{course.title}</ThemedText>
-        <ThemedText
-          type="small"
-          numberOfLines={2}
-          style={{ color: theme.textSecondary, marginTop: 2 }}
-        >
-          {course.description}
-        </ThemedText>
-
-        {/* Meta row */}
-        <View style={styles.metaRow}>
-          <View style={styles.metaItem}>
-            <Feather name="clock" size={12} color={theme.textSecondary} />
-            <ThemedText type="caption" style={{ color: theme.textSecondary }}>
-              {course.durationMinutes} min
-            </ThemedText>
-          </View>
-          <View style={styles.metaItem}>
-            <Feather name="bar-chart-2" size={12} color={theme.textSecondary} />
-            <ThemedText type="caption" style={{ color: theme.textSecondary, textTransform: "capitalize" }}>
-              {t(course.difficulty as any)}
-            </ThemedText>
-          </View>
-          {course.enrolled && (
-            <View style={[styles.enrolledBadge, { backgroundColor: Colors.light.success + "20" }]}>
-              <Feather name="check" size={10} color={Colors.light.success} />
-              <ThemedText type="caption" style={{ color: Colors.light.success, fontWeight: "600" }}>
-                {t("enrolled")}
-              </ThemedText>
-            </View>
+    <Card onPress={onPress} accessibilityLabel={label} accessibilityHint={t("learn.openCourse")} style={styles.card}>
+      <View style={styles.row}>
+        <View style={[styles.thumb, { backgroundColor: theme.surfaceAlt }]}>
+          {thumb ? (
+            <Image source={{ uri: thumb }} style={styles.image} resizeMode="cover" accessibilityIgnoresInvertColors onError={() => setThumbFailed(true)} />
+          ) : (
+            <Feather name={categoryIcon(course.category)} size={32} color={accent} />
           )}
         </View>
-
-        {/* Progress bar */}
-        {course.enrolled && (
-          <View style={styles.progressRow}>
-            <View style={[styles.progressBar, { backgroundColor: theme.border }]}>
-              <View
-                style={[
-                  styles.progressFill,
-                  { width: `${course.completionPercent}%`, backgroundColor: Colors.light.primary },
-                ]}
-              />
-            </View>
-            <ThemedText type="caption" style={{ color: Colors.light.primary, fontWeight: "600" }}>
-              {Math.round(course.completionPercent)}%
-            </ThemedText>
+        <View style={styles.body}>
+          <View style={styles.badges}>
+            <Badge label={t(`categories.${course.category}`)} color={theme.text} tint={theme.surfaceAlt} />
+            {completed ? <Badge label={t("learn.completedBadge")} color={theme.success} tint={theme.successTint} /> : null}
           </View>
-        )}
+          <ThemedText type="h4" numberOfLines={2}>
+            {title}
+          </ThemedText>
+          <ThemedText type="small" muted numberOfLines={1}>
+            {meta}
+          </ThemedText>
+        </View>
       </View>
-    </Pressable>
+      {course.enrolled && !completed ? <ProgressBar percent={course.completionPercent} label={t("common.percentDone", { percent: course.completionPercent })} /> : null}
+    </Card>
   );
 }
 
 const styles = StyleSheet.create({
-  card: {
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1,
-    marginBottom: Spacing.md,
-    overflow: "hidden",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.07,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  pressed: { opacity: 0.88, transform: [{ scale: 0.985 }] },
-  strip: {
-    height: 90,
-    alignItems: "center",
-    justifyContent: "center",
-    position: "relative",
-  },
-  emoji: { fontSize: 44 },
-  catBadge: {
-    position: "absolute",
-    top: Spacing.sm,
-    right: Spacing.sm,
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: 2,
-    borderRadius: BorderRadius.xs,
-  },
-  catText: { ...Typography.caption, color: "#fff", fontWeight: "700" },
-  body: { padding: Spacing.md, gap: Spacing.xs },
-  metaRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: Spacing.md,
-    marginTop: Spacing.xs,
-    flexWrap: "wrap",
-  },
-  metaItem: { flexDirection: "row", alignItems: "center", gap: 4 },
-  enrolledBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 3,
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: 2,
-    borderRadius: BorderRadius.xs,
-  },
-  progressRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: Spacing.sm,
-    marginTop: Spacing.xs,
-  },
-  progressBar: { flex: 1, height: 6, borderRadius: 3, overflow: "hidden" },
-  progressFill: { height: "100%", borderRadius: 3 },
+  card: { gap: Spacing.md },
+  row: { flexDirection: "row", gap: Spacing.md },
+  thumb: { width: THUMB, height: THUMB, borderRadius: BorderRadius.md, overflow: "hidden", alignItems: "center", justifyContent: "center" },
+  image: { width: THUMB, height: THUMB },
+  body: { flex: 1, gap: Spacing.xs, justifyContent: "center" },
+  badges: { flexDirection: "row", gap: Spacing.xs, flexWrap: "wrap" },
 });

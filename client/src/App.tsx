@@ -1,40 +1,54 @@
-import "@/i18n";
-import React from "react";
-import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { SafeAreaProvider } from "react-native-safe-area-context";
-import { QueryClientProvider } from "@tanstack/react-query";
+// First import: loading it starts i18next (and picks the phone's language) before any screen can render.
+import { loadStoredLanguage } from "@/i18n";
+import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
+import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
-
-import { AuthProvider } from "@/hooks/useAuth";
-import { queryClient } from "@/lib/queryClient";
-import { RootStackNavigator } from "@/navigation/RootStackNavigator";
+import React, { useEffect, useState } from "react";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { useTheme } from "@/hooks/useTheme";
+import { AuthProvider } from "@/hooks/useAuth";
 import { usePushNotifications } from "@/hooks/usePushNotifications";
+import { useTheme } from "@/hooks/useTheme";
+import { installNotificationHandler } from "@/lib/push";
+import { installQueryManagers, persistOptions, queryClient } from "@/lib/queryClient";
+import { RootNavigator } from "@/navigation";
 
-function AppInner() {
+// Keep the native splash screen up until the saved language is applied, so the first screen is never in the wrong language.
+void SplashScreen.preventAutoHideAsync().catch(() => undefined);
+installNotificationHandler();
+
+function Shell() {
   const { isDark } = useTheme();
-  usePushNotifications(); // register for push on mount
+  usePushNotifications();
   return (
     <>
       <StatusBar style={isDark ? "light" : "dark"} />
-      <RootStackNavigator />
+      <RootNavigator />
     </>
   );
 }
 
 export default function App() {
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    void loadStoredLanguage().finally(() => setReady(true));
+  }, []);
+  useEffect(() => installQueryManagers(), []);
+  useEffect(() => {
+    if (ready) void SplashScreen.hideAsync().catch(() => undefined);
+  }, [ready]);
+
+  if (!ready) return null;
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <SafeAreaProvider>
-        <ErrorBoundary>
-          <QueryClientProvider client={queryClient}>
-            <AuthProvider>
-              <AppInner />
-            </AuthProvider>
-          </QueryClientProvider>
-        </ErrorBoundary>
-      </SafeAreaProvider>
-    </GestureHandlerRootView>
+    <SafeAreaProvider>
+      <ErrorBoundary>
+        <PersistQueryClientProvider client={queryClient} persistOptions={persistOptions}>
+          <AuthProvider>
+            <Shell />
+          </AuthProvider>
+        </PersistQueryClientProvider>
+      </ErrorBoundary>
+    </SafeAreaProvider>
   );
 }
